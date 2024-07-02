@@ -1,15 +1,21 @@
 import path from "path";
-import { expect, test } from "@playwright/test";
+import { test as $test, expect } from "@playwright/test";
 
 const dirname = new URL(".", import.meta.url).pathname;
 const testFile = (name: string) => path.join(dirname, "test-files", name);
+
+// Skip tests if no secret is provided (e.g. forks)
+const test =
+  process.env.UPLOADTHING_SECRET && process.env.UPLOADTHING_SECRET.length > 0
+    ? $test
+    : $test.skip;
 
 test("uploads a single image", async ({ page }) => {
   await page.goto("/");
   await page.waitForSelector("text=Hello from Hono!");
 
   const fileChooserPromise = page.waitForEvent("filechooser");
-  await page.getByText("Choose file").click();
+  await page.locator("label").filter({ hasText: "Choose File(s)" }).click();
   const fileChooser = await fileChooserPromise;
   await fileChooser.setFiles(testFile("small-file.png"));
   await page.waitForEvent("dialog", {
@@ -29,14 +35,14 @@ test("limits file size", async ({ page, context }) => {
   });
 
   const fileChooserPromise = page.waitForEvent("filechooser");
-  await page.getByText("Choose file").click();
+  await page.locator("label").filter({ hasText: "Choose File(s)" }).click();
   const fileChooser = await fileChooserPromise;
   await fileChooser.setFiles(testFile("big-file.jpg"));
   await page.waitForEvent("dialog", {
     predicate: (d) => d.message() === "Upload failed",
   });
   expect(loggedErrors).toContainEqual(
-    expect.stringContaining("Error: Unable to get presigned urls"),
+    expect.stringContaining("Invalid config: FileSizeMismatch"),
   );
 });
 
@@ -52,7 +58,7 @@ test("limits number of files", async ({ page, context }) => {
   });
 
   const fileChooserPromise = page.waitForEvent("filechooser");
-  await page.getByText("Choose file").click();
+  await page.locator("label").filter({ hasText: "Choose File(s)" }).click();
   const fileChooser = await fileChooserPromise;
   await fileChooser.setFiles([
     testFile("small-file.png"),
@@ -65,6 +71,6 @@ test("limits number of files", async ({ page, context }) => {
     predicate: (d) => d.message() === "Upload failed",
   });
   expect(loggedErrors).toContainEqual(
-    expect.stringContaining("Error: File limit exceeded"),
+    expect.stringContaining("Invalid config: FileCountMismatch"),
   );
 });

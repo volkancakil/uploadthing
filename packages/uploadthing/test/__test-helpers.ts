@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
 import type { StrictRequest } from "msw";
-import { delay, http, HttpResponse } from "msw";
+import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import type { Test } from "vitest";
 import { afterAll, beforeAll, it as itBase, vi } from "vitest";
 
 import { lookup } from "@uploadthing/mime-types";
@@ -34,14 +32,6 @@ export const createApiUrl = (slug: string, action?: ActionType) => {
 export const baseHeaders = {
   "x-uploadthing-version": UPLOADTHING_VERSION,
   "x-uploadthing-package": "vitest",
-};
-
-export const genPort = (test: Test) => {
-  const str = `${test.id}-${test.name}-${Date.now()}`;
-  const hashedValue = createHash("sha256").update(str).digest("hex");
-  const hashedInteger = parseInt(hashedValue, 16);
-  const port = 1024 + (hashedInteger % (65535 - 1024 + 1));
-  return port;
 };
 
 const mockPresigned = (file: {
@@ -96,35 +86,13 @@ const callRequestSpy = async (request: StrictRequest<any>) =>
     })(),
   });
 
-const msw = setupServer(
-  /**
-   * S3
-   */
-  http.post("https://bucket.s3.amazonaws.com", async ({ request }) => {
-    await callRequestSpy(request);
-    return new HttpResponse();
-  }),
-  http.put("https://bucket.s3.amazonaws.com/:key", async ({ request }) => {
-    await callRequestSpy(request);
-    return new HttpResponse(null, {
-      status: 204,
-      headers: { ETag: "abc123" },
-    });
-  }),
-  /**
-   * Static Assets
-   */
-  http.get("https://cdn.foo.com/:fileKey", async ({ request }) => {
-    await callRequestSpy(request);
-    return HttpResponse.text("Lorem ipsum doler sit amet");
-  }),
-  http.get("https://utfs.io/f/:key", async ({ request }) => {
-    await callRequestSpy(request);
-    return HttpResponse.text("Lorem ipsum doler sit amet");
-  }),
-);
-beforeAll(() => msw.listen({ onUnhandledRequest: "bypass" }));
+const msw = setupServer();
+beforeAll(() => {
+  msw.listen({ onUnhandledRequest: "bypass" });
+});
 afterAll(() => msw.close());
+
+export const resetMocks = () => msw.close();
 
 /**
  * Extend the base `it` function to provide a `db` instance to our tests
@@ -142,8 +110,35 @@ export const it = itBase.extend({
       insertFile: (file: any) => files.push(file),
       getFileByKey: (key: string) => files.find((f) => f.key === key),
     };
-    // prepend msw listeners to use db instance
     msw.use(
+      /**
+       * S3
+       */
+      http.post("https://bucket.s3.amazonaws.com", async ({ request }) => {
+        await callRequestSpy(request);
+        return new HttpResponse();
+      }),
+      http.put("https://bucket.s3.amazonaws.com/:key", async ({ request }) => {
+        await callRequestSpy(request);
+        return new HttpResponse(null, {
+          status: 204,
+          headers: { ETag: "abc123" },
+        });
+      }),
+      /**
+       * Static Assets
+       */
+      http.get("https://cdn.foo.com/:fileKey", async ({ request }) => {
+        await callRequestSpy(request);
+        return HttpResponse.text("Lorem ipsum doler sit amet");
+      }),
+      http.get("https://utfs.io/f/:key", async ({ request }) => {
+        await callRequestSpy(request);
+        return HttpResponse.text("Lorem ipsum doler sit amet");
+      }),
+      /**
+       * UploadThing API
+       */
       http.post<never, { files: any[] } & Record<string, string>>(
         "https://uploadthing.com/api/prepareUpload",
         async ({ request }) => {
@@ -208,8 +203,9 @@ export const it = itBase.extend({
 
           // Simulate polling - at least once
           yield HttpResponse.json({ status: "still waiting" });
-          if (!file) {
+          while (!file) {
             file = db.getFileByKey(params.key);
+            if (file) break;
             yield HttpResponse.json({ status: "still waiting" });
           }
 

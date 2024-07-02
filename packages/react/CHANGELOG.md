@@ -1,5 +1,54 @@
 # @uploadthing/react
 
+## 6.7.2
+
+### Patch Changes
+
+- Updated dependencies [[`df6334d`](https://github.com/pingdotgg/uploadthing/commit/df6334d368970ec9791b85f97c58eb7958421e78)]:
+  - @uploadthing/shared@6.7.8
+
+## 6.7.1
+
+### Patch Changes
+
+- Updated dependencies [[`47cece6`](https://github.com/pingdotgg/uploadthing/commit/47cece61d2a76fcdf498f15678528708c47e39b7)]:
+  - @uploadthing/shared@6.7.7
+
+## 6.7.0
+
+### Minor Changes
+
+- [#583](https://github.com/pingdotgg/uploadthing/pull/583) [`7f6df43`](https://github.com/pingdotgg/uploadthing/commit/7f6df4312d65aa6fd35911c0a7e388cda39eb2bd) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - feat: support expo
+
+- [#838](https://github.com/pingdotgg/uploadthing/pull/838) [`c8bdbf8`](https://github.com/pingdotgg/uploadthing/commit/c8bdbf8293be2b235a936214ccec398266851f16) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - feat: upload interruption
+
+  You can now pass an `AbortSignal` to `uploadFiles` and `useUploadThing` to abort an upload after it starts.
+  For the built-in components, we control the signal for you.
+
+- [#831](https://github.com/pingdotgg/uploadthing/pull/831) [`3f3fa57`](https://github.com/pingdotgg/uploadthing/commit/3f3fa572e41dec0dd8ebc94aef20648a8f3bf8d4) Thanks [@markflorkowski](https://github.com/markflorkowski)! - feat: Ability to set `disabled` prop on components
+
+### Patch Changes
+
+- [#860](https://github.com/pingdotgg/uploadthing/pull/860) [`3377f1b`](https://github.com/pingdotgg/uploadthing/commit/3377f1b9f8d1ae87f7202bf0aeb67bb6a6fa1487) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - fix: `onUploadProgress` events out of order when uploading many files
+
+- Updated dependencies [[`f4f876c`](https://github.com/pingdotgg/uploadthing/commit/f4f876c1a0d4d0fe25302c84c0396fb737cd6458)]:
+  - @uploadthing/shared@6.7.6
+
+## 6.6.0
+
+### Minor Changes
+
+- [#809](https://github.com/pingdotgg/uploadthing/pull/809) [`ab89d48`](https://github.com/pingdotgg/uploadthing/commit/ab89d48177857cc4dfccc55346c425c4f103d63f) Thanks [@growupanand](https://github.com/growupanand)! - added onDrop prop for UploadDropzone component
+
+- [#800](https://github.com/pingdotgg/uploadthing/pull/800) [`43b685a`](https://github.com/pingdotgg/uploadthing/commit/43b685a61a90ab44830a0589785869bd11149bca) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - feat: add `generateReactHelpers.getRouteConfig`, `isValidFileSize` and `isValidFileType` helpers
+
+  💡 See https://github.com/pingdotgg/uploadthing/blob/main/examples/with-novel/uploadthing/novel-plugin.ts#L50-L61 for a live example utilizing these helpers.
+
+### Patch Changes
+
+- Updated dependencies [[`4fea8f4`](https://github.com/pingdotgg/uploadthing/commit/4fea8f409dd0baa921c41b09a8f2d87dfa269233), [`4f57264`](https://github.com/pingdotgg/uploadthing/commit/4f5726421e4c732857451bde23d833cd8c53c4b5), [`7d93270`](https://github.com/pingdotgg/uploadthing/commit/7d93270cc008666ebcb982c62754df9bbd2f62bf)]:
+  - @uploadthing/shared@6.7.5
+
 ## 6.5.4
 
 ### Patch Changes

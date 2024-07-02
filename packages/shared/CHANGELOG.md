@@ -1,5 +1,37 @@
 # @uploadthing/shared
 
+## 6.7.8
+
+### Patch Changes
+
+- [#875](https://github.com/pingdotgg/uploadthing/pull/875) [`df6334d`](https://github.com/pingdotgg/uploadthing/commit/df6334d368970ec9791b85f97c58eb7958421e78) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - chore: bump effect versions to fix cloudflare workers support
+
+  See upstream issue: https://github.com/Effect-TS/effect/issues/3057
+
+## 6.7.7
+
+### Patch Changes
+
+- [#871](https://github.com/pingdotgg/uploadthing/pull/871) [`47cece6`](https://github.com/pingdotgg/uploadthing/commit/47cece61d2a76fcdf498f15678528708c47e39b7) Thanks [@markflorkowski](https://github.com/markflorkowski)! - chore: pin effect versions
+
+## 6.7.6
+
+### Patch Changes
+
+- [#841](https://github.com/pingdotgg/uploadthing/pull/841) [`f4f876c`](https://github.com/pingdotgg/uploadthing/commit/f4f876c1a0d4d0fe25302c84c0396fb737cd6458) Thanks [@tim-smart](https://github.com/tim-smart)! - refactor: use `effect/Micro` for client bundle, reducing bundle size shipped to browser by 84kB (-67%)
+
+## 6.7.5
+
+### Patch Changes
+
+- [#808](https://github.com/pingdotgg/uploadthing/pull/808) [`4fea8f4`](https://github.com/pingdotgg/uploadthing/commit/4fea8f409dd0baa921c41b09a8f2d87dfa269233) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - fix treeshakeability of `Effect` dependency by avoiding top-level function calls, and falling back to `#__PURE__` directives otherwise
+
+  Importing some utility from e.g. `@uploadthing/shared` should not explode bundle if `Effect` isn't used for other stuff
+
+- [#810](https://github.com/pingdotgg/uploadthing/pull/810) [`4f57264`](https://github.com/pingdotgg/uploadthing/commit/4f5726421e4c732857451bde23d833cd8c53c4b5) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - dump all matching mimetypes when using "catch-all" generic types to support more browser / OS configurations
+
+- [#813](https://github.com/pingdotgg/uploadthing/pull/813) [`7d93270`](https://github.com/pingdotgg/uploadthing/commit/7d93270cc008666ebcb982c62754df9bbd2f62bf) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - refactor header parsing to support breaking change in Node.js 20.13
+
 ## 6.7.4
 
 ### Patch Changes

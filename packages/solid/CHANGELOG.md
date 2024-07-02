@@ -1,5 +1,39 @@
 # @uploadthing/solid
 
+## 6.5.3
+
+### Patch Changes
+
+- Updated dependencies [[`df6334d`](https://github.com/pingdotgg/uploadthing/commit/df6334d368970ec9791b85f97c58eb7958421e78)]:
+  - @uploadthing/shared@6.7.8
+
+## 6.5.2
+
+### Patch Changes
+
+- Updated dependencies [[`47cece6`](https://github.com/pingdotgg/uploadthing/commit/47cece61d2a76fcdf498f15678528708c47e39b7)]:
+  - @uploadthing/shared@6.7.7
+
+## 6.5.1
+
+### Patch Changes
+
+- [#860](https://github.com/pingdotgg/uploadthing/pull/860) [`3377f1b`](https://github.com/pingdotgg/uploadthing/commit/3377f1b9f8d1ae87f7202bf0aeb67bb6a6fa1487) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - fix: `onUploadProgress` events out of order when uploading many files
+
+- Updated dependencies [[`f4f876c`](https://github.com/pingdotgg/uploadthing/commit/f4f876c1a0d4d0fe25302c84c0396fb737cd6458)]:
+  - @uploadthing/shared@6.7.6
+
+## 6.5.0
+
+### Minor Changes
+
+- [#809](https://github.com/pingdotgg/uploadthing/pull/809) [`ab89d48`](https://github.com/pingdotgg/uploadthing/commit/ab89d48177857cc4dfccc55346c425c4f103d63f) Thanks [@growupanand](https://github.com/growupanand)! - added onDrop prop for UploadDropzone component
+
+### Patch Changes
+
+- Updated dependencies [[`4fea8f4`](https://github.com/pingdotgg/uploadthing/commit/4fea8f409dd0baa921c41b09a8f2d87dfa269233), [`4f57264`](https://github.com/pingdotgg/uploadthing/commit/4f5726421e4c732857451bde23d833cd8c53c4b5), [`7d93270`](https://github.com/pingdotgg/uploadthing/commit/7d93270cc008666ebcb982c62754df9bbd2f62bf)]:
+  - @uploadthing/shared@6.7.5
+
 ## 6.4.4
 
 ### Patch Changes

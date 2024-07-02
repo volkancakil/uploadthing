@@ -11,7 +11,10 @@ export type {
 
 export * from "./sdk/types";
 
-export type { EndpointMetadata } from "@uploadthing/shared";
+export type {
+  EndpointMetadata,
+  ExpandedRouteConfig,
+} from "@uploadthing/shared";
 
 export type {
   FileUploadData,
@@ -29,6 +32,12 @@ export type UploadFilesOptions<
    * The files to upload
    */
   files: File[];
+  /**
+   * An AbortSignal to cancel the upload
+   * Calling `abort()` on the parent AbortController will
+   * cause this function to throw an `UploadAbortedError`
+   */
+  signal?: AbortSignal | undefined;
   /**
    * Called when presigned URLs have been retrieved and the file upload is about to begin
    */

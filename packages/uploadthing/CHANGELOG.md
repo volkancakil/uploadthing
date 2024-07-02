@@ -1,5 +1,80 @@
 # uploadthing
 
+## 6.13.2
+
+### Patch Changes
+
+- [#875](https://github.com/pingdotgg/uploadthing/pull/875) [`df6334d`](https://github.com/pingdotgg/uploadthing/commit/df6334d368970ec9791b85f97c58eb7958421e78) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - chore: bump effect versions to fix cloudflare workers support
+
+  See upstream issue: https://github.com/Effect-TS/effect/issues/3057
+
+- Updated dependencies [[`df6334d`](https://github.com/pingdotgg/uploadthing/commit/df6334d368970ec9791b85f97c58eb7958421e78)]:
+  - @uploadthing/shared@6.7.8
+
+## 6.13.1
+
+### Patch Changes
+
+- [#871](https://github.com/pingdotgg/uploadthing/pull/871) [`47cece6`](https://github.com/pingdotgg/uploadthing/commit/47cece61d2a76fcdf498f15678528708c47e39b7) Thanks [@markflorkowski](https://github.com/markflorkowski)! - chore: pin effect versions
+
+- Updated dependencies [[`47cece6`](https://github.com/pingdotgg/uploadthing/commit/47cece61d2a76fcdf498f15678528708c47e39b7)]:
+  - @uploadthing/shared@6.7.7
+
+## 6.13.0
+
+### Minor Changes
+
+- [#861](https://github.com/pingdotgg/uploadthing/pull/861) [`78c755d`](https://github.com/pingdotgg/uploadthing/commit/78c755d637b29cca4570e36a8d814d343f3f4b5c) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - feat: `@effect/platform` adapter
+
+### Patch Changes
+
+- [#841](https://github.com/pingdotgg/uploadthing/pull/841) [`f4f876c`](https://github.com/pingdotgg/uploadthing/commit/f4f876c1a0d4d0fe25302c84c0396fb737cd6458) Thanks [@tim-smart](https://github.com/tim-smart)! - refactor: use `effect/Micro` for client bundle, reducing bundle size shipped to browser by 84kB (-67%)
+
+- Updated dependencies [[`f4f876c`](https://github.com/pingdotgg/uploadthing/commit/f4f876c1a0d4d0fe25302c84c0396fb737cd6458)]:
+  - @uploadthing/shared@6.7.6
+
+## 6.12.0
+
+### Minor Changes
+
+- [#796](https://github.com/pingdotgg/uploadthing/pull/796) [`24cdb51`](https://github.com/pingdotgg/uploadthing/commit/24cdb5191f42d1f2603f45acb392ab05acd0cb64) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - feat: accept `routeConfig` directly in `uploadthing/client.generateMimeTypes`
+
+  You no longer have to combine `generatePermittedFileTypes` and `generateMimeTypes`:
+
+  ```diff
+  - accept={generateMimeTypes(
+  -   generatePermittedFileTypes(routeConfig).fileTypes,
+  - ).join(",")}
+  + accept={generateMimeTypes(routeConfig ?? {}).join(",")}
+  ```
+
+### Patch Changes
+
+- [#796](https://github.com/pingdotgg/uploadthing/pull/796) [`24cdb51`](https://github.com/pingdotgg/uploadthing/commit/24cdb5191f42d1f2603f45acb392ab05acd0cb64) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - feat: add `additionalProperties` option to file route configs to allow configurations such as image dimension / aspect ratio to propagate down to client
+
+## 6.11.0
+
+### Minor Changes
+
+- [#800](https://github.com/pingdotgg/uploadthing/pull/800) [`43b685a`](https://github.com/pingdotgg/uploadthing/commit/43b685a61a90ab44830a0589785869bd11149bca) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - feat: add `generateReactHelpers.getRouteConfig`, `isValidFileSize` and `isValidFileType` helpers
+
+  💡 See https://github.com/pingdotgg/uploadthing/blob/main/examples/with-novel/uploadthing/novel-plugin.ts#L50-L61 for a live example utilizing these helpers.
+
+### Patch Changes
+
+- [#808](https://github.com/pingdotgg/uploadthing/pull/808) [`4fea8f4`](https://github.com/pingdotgg/uploadthing/commit/4fea8f409dd0baa921c41b09a8f2d87dfa269233) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - fix treeshakeability of `Effect` dependency by avoiding top-level function calls, and falling back to `#__PURE__` directives otherwise
+
+  Importing some utility from e.g. `@uploadthing/shared` should not explode bundle if `Effect` isn't used for other stuff
+
+- [#810](https://github.com/pingdotgg/uploadthing/pull/810) [`4f57264`](https://github.com/pingdotgg/uploadthing/commit/4f5726421e4c732857451bde23d833cd8c53c4b5) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - fix regression in debug logs not showing
+
+- [#813](https://github.com/pingdotgg/uploadthing/pull/813) [`7d93270`](https://github.com/pingdotgg/uploadthing/commit/7d93270cc008666ebcb982c62754df9bbd2f62bf) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - refactor header parsing to support breaking change in Node.js 20.13
+
+- [#821](https://github.com/pingdotgg/uploadthing/pull/821) [`3509fb4`](https://github.com/pingdotgg/uploadthing/commit/3509fb42567d9ec3f8b3ad7b0f4b3418fc0e81ba) Thanks [@juliusmarminge](https://github.com/juliusmarminge)! - fix: invalid response schema for `utapi.getUsageInfo`
+
+- Updated dependencies [[`4fea8f4`](https://github.com/pingdotgg/uploadthing/commit/4fea8f409dd0baa921c41b09a8f2d87dfa269233), [`4f57264`](https://github.com/pingdotgg/uploadthing/commit/4f5726421e4c732857451bde23d833cd8c53c4b5), [`7d93270`](https://github.com/pingdotgg/uploadthing/commit/7d93270cc008666ebcb982c62754df9bbd2f62bf)]:
+  - @uploadthing/shared@6.7.5
+
 ## 6.10.4
 
 ### Patch Changes
