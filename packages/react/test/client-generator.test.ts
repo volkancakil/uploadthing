@@ -12,29 +12,35 @@ const doNotExecute = (_fn: (...args: any[]) => any) => {
 
 const f = createUploadthing();
 
-const router = {
+const _router = {
   exampleRoute: f(["image"])
     .middleware(() => ({ foo: "bar" }))
-    .onUploadComplete(({ metadata }) => {
-      console.log(metadata);
-
+    .onUploadComplete(() => {
       return { foo: "bar" as const };
     }),
 
-  withFooInput: f(["image"])
+  withFooInput: f(["image"], { awaitServerData: false })
     .input(z.object({ foo: z.string() }))
     .middleware((opts) => ({ number: opts.input.foo.length }))
-    .onUploadComplete(({ metadata }) => {
-      console.log(metadata);
-
+    .onUploadComplete(() => {
       return { baz: "qux" as const };
     }),
 
-  withBarInput: f(["image"])
+  withBarInput: f(["image"], { awaitServerData: false })
     .input(z.object({ bar: z.number() }))
     .middleware((opts) => ({ square: opts.input.bar * opts.input.bar }))
-    .onUploadComplete(({ metadata }) => {
-      console.log(metadata);
+    .onUploadComplete(() => {
+      //
+    }),
+
+  withTransformedInput: f(["image"], { awaitServerData: false })
+    .input(z.object({ bar: z.number().transform(String) }))
+    .middleware((opts) => {
+      expectTypeOf(opts.input.bar).toBeString();
+      return { string: opts.input.bar };
+    })
+    .onUploadComplete(() => {
+      //
     }),
 
   // Should technically block returning undefined but there was
@@ -43,7 +49,7 @@ const router = {
   returningUndefined: f(["image"]).onUploadComplete(() => undefined),
 };
 
-const { useUploadThing } = generateReactHelpers<typeof router>();
+const { useUploadThing } = generateReactHelpers<typeof _router>();
 // `new File` doesn't work in test env without custom config. This will do for now.
 const files = [new Blob([""], { type: "image/png" }) as File];
 
@@ -100,6 +106,13 @@ it("infers the input correctly", () => {
     expectTypeOf<Input>().toEqualTypeOf<{ bar: number }>();
     void startUpload(files, { bar: 1 });
   });
+
+  doNotExecute(() => {
+    const { startUpload } = useUploadThing("withTransformedInput");
+    type Input = Parameters<typeof startUpload>[1];
+    expectTypeOf<Input>().toEqualTypeOf<{ bar: number }>();
+    void startUpload(files, { bar: 1 });
+  });
 });
 
 it("infers output properly", () => {
@@ -114,7 +127,7 @@ it("infers output properly", () => {
   doNotExecute(async () => {
     const { startUpload } = useUploadThing("withFooInput");
     const res = await startUpload(files, { foo: "bar" });
-    expectTypeOf<ClientUploadedFileData<{ baz: "qux" }>[] | undefined>(res);
+    expectTypeOf<ClientUploadedFileData<null>[] | undefined>(res);
   });
 
   doNotExecute(async () => {
@@ -131,7 +144,6 @@ it("infers output properly", () => {
 
   doNotExecute(async () => {
     const { startUpload } = useUploadThing("withFooInput", {
-      skipPolling: true,
       onClientUploadComplete: (res) => {
         expectTypeOf<ClientUploadedFileData<null>[]>(res);
       },
@@ -142,12 +154,27 @@ it("infers output properly", () => {
 
   doNotExecute(async () => {
     const { startUpload } = useUploadThing("withBarInput", {
-      skipPolling: true,
       onClientUploadComplete: (res) => {
         expectTypeOf<ClientUploadedFileData<null>[]>(res);
       },
     });
     const res = await startUpload(files, { bar: 1 });
     expectTypeOf<ClientUploadedFileData<null>[] | undefined>(res);
+  });
+});
+
+it("gets go-to-definition proxy as endpoint arg", () => {
+  doNotExecute(async () => {
+    const _ut = useUploadThing((routeRegistry) => routeRegistry.withFooInput);
+    type _Input = Parameters<typeof _ut.startUpload>[1];
+    expectTypeOf<_Input>().toEqualTypeOf<{ foo: string }>();
+  });
+
+  doNotExecute(async () => {
+    const { startUpload } = useUploadThing(
+      (routeRegistry) => routeRegistry.exampleRoute,
+    );
+    const res = await startUpload(files);
+    expectTypeOf<ClientUploadedFileData<{ foo: "bar" }>[] | undefined>(res);
   });
 });

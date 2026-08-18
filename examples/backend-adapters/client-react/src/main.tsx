@@ -11,10 +11,12 @@ function App() {
       <div>
         <UploadButton
           endpoint="videoAndImage"
-          skipPolling
           onClientUploadComplete={(file) => {
             console.log("uploaded", file);
             alert("Upload complete");
+          }}
+          onUploadAborted={() => {
+            alert("Upload aborted");
           }}
           onUploadError={(error) => {
             console.error(error, error.cause);
@@ -22,8 +24,7 @@ function App() {
           }}
         />
         <UploadDropzone
-          endpoint="videoAndImage"
-          skipPolling
+          endpoint={(routeRegistry) => routeRegistry.videoAndImage}
           onClientUploadComplete={(file) => {
             console.log("uploaded", file);
             alert("Upload complete");

@@ -1,38 +1,39 @@
 import type { NextRequest } from "next/server";
+import * as Effect from "effect/Effect";
 
 import type { Json } from "@uploadthing/shared";
 
-import type { FileRouter, RouteHandlerOptions } from "./internal/types";
-import type { CreateBuilderOptions } from "./internal/upload-builder";
-import { createBuilder } from "./internal/upload-builder";
-import { INTERNAL_DO_NOT_USE_createRouteHandlerCore } from "./server";
+import { makeAdapterHandler } from "./_internal/handler";
+import type { CreateBuilderOptions } from "./_internal/upload-builder";
+import { createBuilder } from "./_internal/upload-builder";
+import type { FileRouter, RouteHandlerOptions } from "./types";
 
 export type { FileRouter };
-export { UTFiles } from "./internal/types";
+export {
+  UTFiles,
+  /**
+   * This is an experimental feature.
+   * You need to be feature flagged on our backend to use this
+   */
+  UTRegion as experimental_UTRegion,
+} from "./_internal/types";
+
+type AdapterArgs = {
+  req: NextRequest;
+};
 
 export const createUploadthing = <TErrorShape extends Json>(
   opts?: CreateBuilderOptions<TErrorShape>,
-) =>
-  createBuilder<
-    { req: NextRequest; res: undefined; event: undefined },
-    TErrorShape
-  >(opts);
+) => createBuilder<AdapterArgs, TErrorShape>(opts);
 
 export const createRouteHandler = <TRouter extends FileRouter>(
   opts: RouteHandlerOptions<TRouter>,
 ) => {
-  const handlers = INTERNAL_DO_NOT_USE_createRouteHandlerCore(
+  const handler = makeAdapterHandler<[NextRequest], AdapterArgs>(
+    (req) => Effect.succeed({ req }),
+    (req) => Effect.succeed(req),
     opts,
     "nextjs-app",
   );
-
-  return {
-    POST: (req: NextRequest) => handlers.POST(req),
-    GET: (req: NextRequest) => handlers.GET(req),
-  };
+  return { POST: handler, GET: handler };
 };
-
-/**
- * @deprecated Use {@link createRouteHandler} instead
- */
-export const createNextRouteHandler = createRouteHandler;

@@ -7,6 +7,10 @@ node_modules
 
 # testing
 coverage
+coverage.json
+
+# astro
+.astro
 
 # next.js
 .next/
@@ -20,11 +24,18 @@ expo-env.d.ts
 .output
 .vinxi
 
+# tanstack start
+.tanstack/start/build
+.tanstack/start/tmp
+.nitro
+
 # misc
 .DS_Store
 *.pem
 .data
 .idea
+*.db
+*.timestamp_*
 
 # debug
 npm-debug.log*
@@ -54,9 +65,15 @@ packages/*/*/
 !packages/*/playground/
 
 dist
+tsup.config.bundled_*
+app.config.bundled_*
 
 .svelte-kit
 .solid
 .vercel
 .output
 .nuxt
+.react-router/
+
+# direnv
+.direnv/

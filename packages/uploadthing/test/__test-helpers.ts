@@ -1,22 +1,15 @@
-import { createHash } from "node:crypto";
+import * as Redacted from "effect/Redacted";
+import * as S from "effect/Schema";
 import type { StrictRequest } from "msw";
-import { delay, http, HttpResponse } from "msw";
-import { setupServer } from "msw/node";
-import type { Test } from "vitest";
-import { afterAll, beforeAll, it as itBase, vi } from "vitest";
+import { http, HttpResponse } from "msw";
+import { vi } from "vitest";
 
-import { lookup } from "@uploadthing/mime-types";
-import { generateUploadThingURL } from "@uploadthing/shared";
+import { UPLOADTHING_VERSION } from "../src/_internal/config";
+import { ParsedToken, UploadThingToken } from "../src/_internal/shared-schemas";
+import type { ActionType } from "../src/_internal/shared-schemas";
+import type { UploadPutResult } from "../src/_internal/types";
 
-import { UPLOADTHING_VERSION } from "../src/internal/constants";
-import type {
-  MPUResponse,
-  PresignedBase,
-  PSPResponse,
-} from "../src/internal/shared-schemas";
-import type { ActionType } from "../src/internal/types";
-
-export const requestSpy = vi.fn<[string, RequestInit]>();
+export const requestSpy = vi.fn<(url: string, req: RequestInit) => void>();
 export const requestsToDomain = (domain: string) =>
   requestSpy.mock.calls.filter(([url]) => url.includes(domain));
 
@@ -24,11 +17,48 @@ export const middlewareMock = vi.fn();
 export const uploadCompleteMock = vi.fn();
 export const onErrorMock = vi.fn();
 
-export const createApiUrl = (slug: string, action?: ActionType) => {
+const tokenData = {
+  apiKey: Redacted.make("sk_foo"),
+  appId: "app-1",
+  regions: ["fra1"] as const,
+};
+export const testToken = {
+  encoded: S.encodeSync(UploadThingToken)(ParsedToken.make(tokenData)),
+  decoded: tokenData,
+};
+
+export const API_URL =
+  typeof process !== "undefined" && process.env.UPLOADTHING_API_URL
+    ? process.env.UPLOADTHING_API_URL
+    : "https://api.uploadthing.com";
+export const UTFS_URL =
+  typeof process !== "undefined" && process.env.UPLOADTHING_API_URL
+    ? "https://staging.utfs.io"
+    : "https://utfs.io";
+export const UFS_HOST =
+  typeof process !== "undefined" && process.env.UPLOADTHING_API_URL
+    ? "utf-staging.com"
+    : "ufs.sh";
+export const INGEST_URL =
+  typeof process !== "undefined" && process.env.UPLOADTHING_API_URL
+    ? "https://fra1.ingest.ut-staging.com"
+    : "https://fra1.ingest.uploadthing.com";
+
+export const appUrlPattern = (appId = testToken.decoded.appId) =>
+  new RegExp(`^${UTFS_URL}/a/${appId}/.+$`);
+export const fileUrlPattern = () => new RegExp(`^${UTFS_URL}/f/.+$`);
+export const ufsUrlPattern = (appId = testToken.decoded.appId) =>
+  new RegExp(`^https://${appId}.${UFS_HOST}/f/.+$`);
+
+export const createApiUrl = (slug: string, action?: typeof ActionType.Type) => {
   const url = new URL("http://localhost:3000");
   url.searchParams.set("slug", slug);
   if (action) url.searchParams.set("actionType", action);
   return url;
+};
+
+export const doNotExecute = (_fn: (...args: any[]) => any) => {
+  // noop
 };
 
 export const baseHeaders = {
@@ -36,53 +66,11 @@ export const baseHeaders = {
   "x-uploadthing-package": "vitest",
 };
 
-export const genPort = (test: Test) => {
-  const str = `${test.id}-${test.name}-${Date.now()}`;
-  const hashedValue = createHash("sha256").update(str).digest("hex");
-  const hashedInteger = parseInt(hashedValue, 16);
-  const port = 1024 + (hashedInteger % (65535 - 1024 + 1));
-  return port;
-};
-
-const mockPresigned = (file: {
-  name: string;
-  size: number;
-  customId: string | null;
-}): PSPResponse | MPUResponse => {
-  const base: PresignedBase = {
-    contentDisposition: "inline",
-    customId: file.customId ?? null,
-    fileName: file.name,
-    fileType: lookup(file.name) as any,
-    fileUrl: "https://utfs.io/f/abc-123.txt",
-    key: "abc-123.txt",
-    pollingJwt: "random-jwt",
-    pollingUrl: generateUploadThingURL("/api/serverCallback"),
-  };
-  if (file.size > 5 * 1024 * 1024) {
-    return {
-      ...base,
-      chunkCount: 2,
-      chunkSize: file.size / 2,
-      uploadId: "random-upload-id",
-      urls: [
-        "https://bucket.s3.amazonaws.com/abc-123.txt?partNumber=1&uploadId=random-upload-id",
-        "https://bucket.s3.amazonaws.com/abc-123.txt?partNumber=2&uploadId=random-upload-id",
-      ],
-    };
-  }
-  return {
-    ...base,
-    url: "https://bucket.s3.amazonaws.com",
-    fields: { key: "abc-123.txt" },
-  };
-};
-
 /**
  * Call this in each MSW handler to spy on the request
  * and provide an easy way to assert on the request
  */
-const callRequestSpy = async (request: StrictRequest<any>) =>
+export const callRequestSpy = async (request: StrictRequest<any>) =>
   requestSpy(new URL(request.url).toString(), {
     method: request.method,
     headers: Object.fromEntries(request.headers),
@@ -96,21 +84,7 @@ const callRequestSpy = async (request: StrictRequest<any>) =>
     })(),
   });
 
-const msw = setupServer(
-  /**
-   * S3
-   */
-  http.post("https://bucket.s3.amazonaws.com", async ({ request }) => {
-    await callRequestSpy(request);
-    return new HttpResponse();
-  }),
-  http.put("https://bucket.s3.amazonaws.com/:key", async ({ request }) => {
-    await callRequestSpy(request);
-    return new HttpResponse(null, {
-      status: 204,
-      headers: { ETag: "abc123" },
-    });
-  }),
+export const handlers = [
   /**
    * Static Assets
    */
@@ -118,198 +92,41 @@ const msw = setupServer(
     await callRequestSpy(request);
     return HttpResponse.text("Lorem ipsum doler sit amet");
   }),
-  http.get("https://utfs.io/f/:key", async ({ request }) => {
+  http.get(`https://(.+).${UFS_HOST}/f/:key`, async ({ request }) => {
     await callRequestSpy(request);
     return HttpResponse.text("Lorem ipsum doler sit amet");
   }),
-);
-beforeAll(() => msw.listen({ onUnhandledRequest: "bypass" }));
-afterAll(() => msw.close());
-
-/**
- * Extend the base `it` function to provide a `db` instance to our tests
- * and extend the MSW handlers to mock the UploadThing API
- *
- * NOTE:: Tests **must** destruct the `db` instance from the test context for it to be used
- * @example it("should do something", ({ db }) => { ... })
- */
-export const it = itBase.extend({
-  // eslint-disable-next-line no-empty-pattern
-  db: async ({}, use) => {
-    const files: any[] = [];
-    const db = {
-      files,
-      insertFile: (file: any) => files.push(file),
-      getFileByKey: (key: string) => files.find((f) => f.key === key),
-    };
-    // prepend msw listeners to use db instance
-    msw.use(
-      http.post<never, { files: any[] } & Record<string, string>>(
-        "https://uploadthing.com/api/prepareUpload",
-        async ({ request }) => {
-          await callRequestSpy(request);
-          const body = await request.json();
-
-          const presigneds = body.files.map((file) => {
-            const presigned = mockPresigned(file);
-            db.insertFile({
-              ...file,
-              customId: file.customId ?? null,
-              type: presigned.fileType,
-              key: presigned.key,
-              callbackUrl: body.callbackUrl,
-              callbackSlug: body.callbackSlug,
-              metadata: JSON.stringify(body.metadata ?? "{}"),
-            });
-            return presigned;
-          });
-          return HttpResponse.json(presigneds);
-        },
-      ),
-      http.post<never, { files: any[]; metadata: unknown }>(
-        "https://uploadthing.com/api/uploadFiles",
-        async ({ request }) => {
-          await callRequestSpy(request);
-          const body = await request.json();
-
-          const presigneds = body?.files.map((file) => {
-            const presigned = mockPresigned(file);
-            db.insertFile({
-              key: presigned.key,
-              metadata: JSON.stringify(body.metadata ?? "{}"),
-              customId: file.customId ?? null,
-              ...file,
-            });
-            return presigned;
-          });
-          return HttpResponse.json({ data: presigneds });
-        },
-      ),
-      http.post(
-        "https://uploadthing.com/api/completeMultipart",
-        async ({ request }) => {
-          await callRequestSpy(request);
-          return HttpResponse.json({ success: true });
-        },
-      ),
-      http.post(
-        "https://uploadthing.com/api/failureCallback",
-        async ({ request }) => {
-          await callRequestSpy(request);
-          return HttpResponse.json({ success: true });
-        },
-      ),
-      http.get<{ key: string }>(
-        "https://uploadthing.com/api/pollUpload/:key",
-        // @ts-expect-error - https://github.com/mswjs/msw/pull/2108
-        async function* ({ request, params }) {
-          await callRequestSpy(request);
-          let file = null;
-
-          // Simulate polling - at least once
-          yield HttpResponse.json({ status: "still waiting" });
-          if (!file) {
-            file = db.getFileByKey(params.key);
-            yield HttpResponse.json({ status: "still waiting" });
-          }
-
-          return HttpResponse.json({
-            status: "done",
-            fileData: {
-              ...file,
-              fileName: file.name,
-              fileSize: file.size,
-              fileType: file.type,
-              fileKey: file.key,
-            },
-          });
-        },
-      ),
-      http.post(
-        "https://uploadthing.com/api/requestFileAccess",
-        async ({ request }) => {
-          await callRequestSpy(request);
-          return HttpResponse.json({
-            url: "https://utfs.io/f/someFileKey?x-some-amz=query-param",
-          });
-        },
-      ),
-      http.post(
-        "https://uploadthing.com/api/serverCallback",
-        async ({ request }) => {
-          await callRequestSpy(request);
-          return HttpResponse.json({ status: "ok" });
-        },
-      ),
-      http.get(
-        "https://uploadthing.com/api/serverCallback",
-        // @ts-expect-error - https://github.com/mswjs/msw/pull/2108
-        async function* ({ request }) {
-          await callRequestSpy(request);
-
-          yield HttpResponse.json({ status: "still waiting" });
-          return HttpResponse.json({ status: "done", callbackData: null });
-        },
-      ),
-      http.post(
-        "https://uploadthing.com/api/updateACL",
-        async ({ request }) => {
-          await callRequestSpy(request);
-          return HttpResponse.json({ success: true });
-        },
-      ),
-    );
-    await use(db); // provide test context
-    files.length = 0; // clear files after each test
-  },
-});
-
-/**
- * Call this in your test to make the S3 requests fail
- */
-export const useBadS3 = () =>
-  msw.use(
-    http.post("https://bucket.s3.amazonaws.com", async ({ request }) => {
+  /**
+   * UploadThing Ingest
+   */
+  http.all<{ key: string }>(
+    `${INGEST_URL}/:key`,
+    async ({ request, params }) => {
       await callRequestSpy(request);
-      return new HttpResponse(null, { status: 403 });
-    }),
-    http.put("https://bucket.s3.amazonaws.com/:key", async ({ request }) => {
-      await callRequestSpy(request);
-      return new HttpResponse(null, { status: 204 });
-    }),
-  );
-
-export const useBadUTApi = () =>
-  msw.use(
-    http.post("https://uploadthing.com/api/*", async () => {
-      return HttpResponse.json({ error: "Not found" }, { status: 404 });
-    }),
-  );
-
-/**
- * Call this in your test to make the S3 requests fail a couple times before succeeding
- */
-export const useHalfBadS3 = () =>
-  msw.use(
-    http.post(
-      "https://bucket.s3.amazonaws.com",
-      // @ts-expect-error - https://github.com/mswjs/msw/pull/2108
-      async function* ({ request }) {
-        await callRequestSpy(request);
-        yield new HttpResponse(null, { status: 403 });
-        return new HttpResponse();
-      },
-    ),
-    http.put(
-      "https://bucket.s3.amazonaws.com/:key",
-      // @ts-expect-error - https://github.com/mswjs/msw/pull/2108
-      async function* ({ request }) {
-        await callRequestSpy(request);
-        yield new HttpResponse(null, { status: 403 });
-        return new HttpResponse(null, {
-          status: 204,
-          headers: { ETag: "abc123" },
-        });
-      },
-    ),
-  );
+      const appId = new URLSearchParams(request.url).get("x-ut-identifier");
+      return HttpResponse.json<UploadPutResult>({
+        url: `${UTFS_URL}/f/${params.key}`,
+        appUrl: `${UTFS_URL}/a/${appId}/${params.key}`,
+        ufsUrl: `https://${appId}.${UFS_HOST}/f/${params.key}`,
+        serverData: null,
+        fileHash: Array.from(new Uint8Array(await request.arrayBuffer()))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(""),
+      });
+    },
+  ),
+  /**
+   * UploadThing API
+   */
+  http.post(`${API_URL}/v6/requestFileAccess`, async ({ request }) => {
+    await callRequestSpy(request);
+    return HttpResponse.json({
+      url: `${UTFS_URL}/f/someFileKey?x-some-amz=query-param`,
+      ufsUrl: `https://app-1.ufs.sh/f/someFileKey?signature=hmac-sha256%3Dsomesignature&expires=${Date.now() + 10000}`,
+    });
+  }),
+  http.post(`${API_URL}/v6/updateACL`, async ({ request }) => {
+    await callRequestSpy(request);
+    return HttpResponse.json({ success: true });
+  }),
+];

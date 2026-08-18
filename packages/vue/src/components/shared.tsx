@@ -1,12 +1,18 @@
 import * as Vue from "vue";
 import { onMounted, onUnmounted } from "vue";
 
+import type { ClassListMerger } from "@uploadthing/shared";
+
 export const usePaste = (callback: (e: ClipboardEvent) => void) => {
+  const controller = new AbortController();
+
   onMounted(() => {
-    document.addEventListener("paste", callback);
+    document.addEventListener("paste", callback, {
+      signal: controller.signal,
+    });
   });
   onUnmounted(() => {
-    document.removeEventListener("paste", callback);
+    controller.abort();
   });
 };
 
@@ -26,16 +32,23 @@ export const Spinner = Vue.defineComponent(() => () => {
   );
 });
 
-export const progressWidths: Record<number, string> = {
-  0: "after:w-0",
-  10: "after:w-[10%]",
-  20: "after:w-[20%]",
-  30: "after:w-[30%]",
-  40: "after:w-[40%]",
-  50: "after:w-[50%]",
-  60: "after:w-[60%]",
-  70: "after:w-[70%]",
-  80: "after:w-[80%]",
-  90: "after:w-[90%]",
-  100: "after:w-[100%]",
-};
+export const Cancel = Vue.defineComponent(
+  (props: { cn: ClassListMerger }) => () => {
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class={props.cn(
+          "fill-none stroke-current stroke-2",
+          "hidden size-4 group-hover:block",
+        )}
+      >
+        <circle cx="12" cy="12" r="10" />
+        <path d="m4.9 4.9 14.2 14.2" />
+      </svg>
+    );
+  },
+  { props: ["cn"] },
+);

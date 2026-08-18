@@ -1,19 +1,18 @@
-/* eslint-disable @typescript-eslint/no-empty-interface */
-
 import type { Blob as NodeBlob } from "buffer";
+import type * as Config from "effect/Config";
+import type * as LogLevel from "effect/LogLevel";
 
 import type {
   ACL,
   ContentDisposition,
   Either,
   FetchEsque,
-  Json,
   MaybeUrl,
   SerializedUploadThingError,
   Time,
 } from "@uploadthing/shared";
 
-import type { LogLevel } from "../internal/logger";
+import type { LogFormat } from "../_internal/logger";
 import type { UploadedFileData } from "../types";
 
 export interface UTApiOptions {
@@ -23,20 +22,44 @@ export interface UTApiOptions {
    */
   fetch?: FetchEsque;
   /**
-   * Provide a custom UploadThing API key.
-   * @default process.env.UPLOADTHING_SECRET
+   * Provide a custom UploadThing token
+   * @default process.env.UPLOADTHING_TOKEN
    */
-  apiKey?: string;
+  token?: string;
   /**
    * @default "info"
    */
-  logLevel?: LogLevel;
+  logLevel?: LogLevel.Literal;
+  /**
+   * What format log entries should be in
+   * @default "pretty" in development, else "json"
+   * @see https://effect.website/docs/guides/observability/logging#built-in-loggers
+   */
+  logFormat?: Config.Config.Success<typeof LogFormat>;
   /**
    * Set the default key type for file operations. Allows you to set your preferred filter
    * for file keys or custom identifiers without needing to specify it on every call.
    * @default "fileKey"
    */
   defaultKeyType?: "fileKey" | "customId";
+  /**
+   * URL override for the API server
+   */
+  apiUrl?: string;
+  /**
+   * URL override for the ingest server
+   */
+  ingestUrl?: string;
+  /**
+   * Hostname override for the CDN hosting the files
+   * @default "ufs.sh"
+   */
+  ufsHost?: string;
+  /**
+   * Where to put the appId in the URL.
+   * @default "subdomain"
+   */
+  ufsAppIdLocation?: "subdomain" | "path";
 }
 
 export type UrlWithOverrides = {
@@ -48,13 +71,22 @@ export type UrlWithOverrides = {
 type BlobEsque = NodeBlob | Blob;
 export type FileEsque = BlobEsque & {
   name: string;
+  lastModified?: number;
   customId?: string | null | undefined;
 };
 
 export interface UploadFilesOptions {
-  metadata?: Json;
   contentDisposition?: ContentDisposition;
   acl?: ACL;
+  /**
+   * AbortSignal that can be used to cancel the upload
+   */
+  signal?: AbortSignal;
+  /**
+   * The number of files to upload concurrently. Must be a positive integer between 1 and 25.
+   * @default 1
+   */
+  concurrency?: number;
 }
 export type UploadFileResult = Either<
   UploadedFileData,
@@ -80,9 +112,18 @@ export interface ListFilesOptions {
   offset?: number;
 }
 
-type KeyRename = { key: string; newName: string };
+type KeyRename = { fileKey: string; newName: string };
 type CustomIdRename = { customId: string; newName: string };
 export type RenameFileUpdate = KeyRename | CustomIdRename;
+
+export interface GenerateSignedURLOptions {
+  /**
+   * How long the URL will be valid for.
+   * - Must be positive and less than 7 days (604800 seconds).
+   * @default 5min
+   */
+  expiresIn?: Time;
+}
 
 export interface GetSignedURLOptions extends KeyTypeOptionsBase {
   /**

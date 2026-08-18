@@ -3,23 +3,47 @@ import type { MimeType } from "@uploadthing/mime-types";
 import type { AllowedFileType } from "./file-types";
 
 export type JsonValue = string | number | boolean | null | undefined;
-export type JsonArray = JsonValue[];
 export type JsonObject = { [key: string]: JsonValue | JsonObject | JsonArray };
+export type JsonArray = (JsonValue | JsonObject)[];
 export type Json = JsonValue | JsonObject | JsonArray;
 
 export type Overwrite<T, U> = Omit<T, keyof U> & U;
 export type WithRequired<T, K extends keyof T> = T & Required<Pick<T, K>>;
 export type ErrorMessage<TError extends string> = TError;
-// eslint-disable-next-line @typescript-eslint/ban-types
 export type Simplify<TType> = { [TKey in keyof TType]: TType[TKey] } & {};
 export type MaybePromise<TType> = TType | Promise<TType>;
 export type Either<TData, TError> =
   | { data: TData; error: null }
   | { data: null; error: TError };
 export type ExtendObjectIf<Predicate, ToAdd> = undefined extends Predicate
-  ? // eslint-disable-next-line @typescript-eslint/ban-types
-    {}
+  ? {}
   : ToAdd;
+export type DeepPartial<T> = T extends object
+  ? {
+      [P in keyof T]?: DeepPartial<T[P]>;
+    }
+  : T;
+
+export interface FileProperties {
+  name: string;
+  size: number;
+  type: string;
+  lastModified?: number | undefined;
+}
+
+export type ExtractHashPartsFn = (
+  file: FileProperties,
+) => (string | number | undefined | null | boolean)[];
+
+/**
+ * Custom hash function for the file seed portion of the key.
+ * By default, Effect's `Hash.string` (32-bit) is used. Provide a function
+ * that returns a wider hash to increase entropy and reduce collision probability.
+ * The function receives the JSON-stringified hash parts and should return
+ * a number or an array of numbers (for wider entropy via multiple SQIds inputs).
+ * @default Hash.string (32-bit)
+ */
+export type HashFn = (input: string) => number | number[];
 
 /**
  * A subset of the standard RequestInit properties needed by UploadThing internally.
@@ -59,6 +83,7 @@ export interface ResponseEsque {
   json: <T = unknown>() => Promise<T>;
   text: () => Promise<string>;
   blob: () => Promise<Blob>;
+  body: ReadableStream | null;
 
   headers: Headers;
 
@@ -83,7 +108,6 @@ export type FileSize = `${PowOf2}${SizeUnit}`;
 export type TimeShort = "s" | "m" | "h" | "d";
 export type TimeLong = "second" | "minute" | "hour" | "day";
 type SuggestedNumbers = 2 | 3 | 4 | 5 | 6 | 7 | 10 | 15 | 30 | 60;
-// eslint-disable-next-line @typescript-eslint/ban-types
 type AutoCompleteableNumber = SuggestedNumbers | (number & {});
 export type Time =
   | number
@@ -98,18 +122,110 @@ export type ContentDisposition = (typeof ValidContentDispositions)[number];
 export const ValidACLs = ["public-read", "private"] as const;
 export type ACL = (typeof ValidACLs)[number];
 
-type RouteConfig = {
-  maxFileSize: FileSize;
-  maxFileCount: number;
-  minFileCount: number; // must be <= maxFileCount
-  contentDisposition: ContentDisposition;
-  acl?: ACL; // default is set on UT server, not backfilled like other options
+type ImageProperties = {
+  /** Specify the width of the image. */
+  width?: number;
+  /** Specify the height of the image. */
+  height?: number;
+  /**
+   * Specify the aspect ratio of the image.
+   * @remarks If both width and height are specified, this will be ignored.
+   */
+  aspectRatio?: number;
+};
+
+type AdditionalProperties<T> = Record<string, unknown> & T;
+
+export type RouteConfig<TAdditionalProperties extends Record<string, unknown>> =
+  {
+    /**
+     * Human-readable file size limit
+     * @example "1MB"
+     * @default https://docs.uploadthing.com/api-reference/server#defaults
+     */
+    maxFileSize: FileSize;
+    /**
+     * Maximum number of files allowed to be uploaded of this type
+     * @example 10
+     * @default https://docs.uploadthing.com/api-reference/server#defaults
+     */
+    maxFileCount: number;
+    /**
+     * Minimum number of files allowed to be uploaded of this type
+     * @remarks Must be <= maxFileCount
+     * @example 2
+     * @default 1
+     */
+    minFileCount: number;
+    /**
+     * Specify the [content disposition](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition) of the uploaded file
+     * @example "attachment"
+     * @default "inline"
+     */
+    contentDisposition: ContentDisposition;
+    /**
+     * Specify the [access control list](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Origin) of the uploaded file
+     * @remarks This must be enabled for your app. See https://docs.uploadthing.com/regions-and-acl#access-controls.
+     * @example "private"
+     * @default "public-read"
+     */
+    acl?: ACL;
+    /**
+     * Additional properties to be passed to the client-side `useRouteConfig` hook
+     * @remarks These properties are not validated on the server on upload
+     */
+    additionalProperties?: AdditionalProperties<TAdditionalProperties>;
+  };
+
+/**
+ * Shared config options for an entire route not bound to any specific file type
+ * @example
+ * ```ts
+ * f(
+ *   { image: {} },
+ *   { awaitServerData: true },
+ * )
+ * ```
+ */
+export type RouteOptions = {
+  /**
+   * Set this to `false` to run the client-side `onClientUploadComplete`
+   * immediately after file has been uploaded without waiting for the
+   * server to return the `onUploadComplete` data.
+   * @default true
+   */
+  awaitServerData?: boolean;
+  /**
+   * TTL for the presigned URLs generated for the upload
+   * @default `1h`
+   */
+  presignedURLTTL?: Time;
+  /**
+   * Function that pulls out the properties of the uploaded file
+   * that you want to be included as part of the presigned URL generation.
+   * By default, we include all properties as well as a timestamp to make
+   * each URL unique. You can for example override this to always return
+   * the same hash for the same file, no matter when it was uploaded.
+   * @default (file) => [file.name, file.size, file.type, file.lastModified,  Date.now()]
+   */
+  getFileHashParts?: ExtractHashPartsFn;
+  /**
+   * Custom hash function for the file seed portion of the key.
+   * By default, Effect's `Hash.string` (32-bit) is used. Provide a function
+   * that returns a wider hash to increase entropy and reduce collision probability.
+   * The function receives the JSON-stringified hash parts and should return
+   * a number or an array of numbers (for wider entropy via multiple SQIds inputs).
+   * @default Hash.string (32-bit)
+   */
+  hashFn?: HashFn;
 };
 
 export type FileRouterInputKey = AllowedFileType | MimeType;
 
 export type ExpandedRouteConfig = {
-  [key in FileRouterInputKey]?: RouteConfig;
+  [key in FileRouterInputKey]?: key extends `image${string}`
+    ? RouteConfig<ImageProperties>
+    : RouteConfig<Record<string, unknown>>;
 };
 
 export type EndpointMetadata = {
@@ -117,8 +233,6 @@ export type EndpointMetadata = {
   config: ExpandedRouteConfig;
 }[];
 
-type PartialRouteConfig = Partial<
-  Record<FileRouterInputKey, Partial<RouteConfig>>
->;
-
-export type FileRouterInputConfig = FileRouterInputKey[] | PartialRouteConfig;
+export type FileRouterInputConfig =
+  | FileRouterInputKey[]
+  | DeepPartial<ExpandedRouteConfig>;

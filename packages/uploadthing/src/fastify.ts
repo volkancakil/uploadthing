@@ -1,90 +1,55 @@
-import type {
-  FastifyInstance,
-  FastifyReply,
-  FastifyRequest,
-  RouteHandlerMethod,
-} from "fastify";
+import * as Effect from "effect/Effect";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { Json } from "@uploadthing/shared";
-import { getStatusCodeFromError } from "@uploadthing/shared";
 
-import { UPLOADTHING_VERSION } from "./internal/constants";
-import { formatError } from "./internal/error-formatter";
-import {
-  buildPermissionsInfoHandler,
-  buildRequestHandler,
-  runRequestHandlerAsync,
-} from "./internal/handler";
-import { incompatibleNodeGuard } from "./internal/incompat-node-guard";
-import { toWebRequest } from "./internal/to-web-request";
-import type { FileRouter, RouteHandlerOptions } from "./internal/types";
-import type { CreateBuilderOptions } from "./internal/upload-builder";
-import { createBuilder } from "./internal/upload-builder";
+import { makeAdapterHandler } from "./_internal/handler";
+import { toWebRequest } from "./_internal/to-web-request";
+import type { CreateBuilderOptions } from "./_internal/upload-builder";
+import { createBuilder } from "./_internal/upload-builder";
+import type { FileRouter, RouteHandlerOptions } from "./types";
 
-export { UTFiles } from "./internal/types";
+export {
+  UTFiles,
+  /**
+   * This is an experimental feature.
+   * You need to be feature flagged on our backend to use this
+   */
+  UTRegion as experimental_UTRegion,
+} from "./_internal/types";
 export type { FileRouter };
 
-type MiddlewareArgs = {
+type AdapterArgs = {
   req: FastifyRequest;
   res: FastifyReply;
-  event: undefined;
 };
 
 export const createUploadthing = <TErrorShape extends Json>(
   opts?: CreateBuilderOptions<TErrorShape>,
-) => createBuilder<MiddlewareArgs, TErrorShape>(opts);
+) => createBuilder<AdapterArgs, TErrorShape>(opts);
 
 export const createRouteHandler = <TRouter extends FileRouter>(
   fastify: FastifyInstance,
   opts: RouteHandlerOptions<TRouter>,
   done: (err?: Error) => void,
 ) => {
-  incompatibleNodeGuard();
-
-  const requestHandler = buildRequestHandler<TRouter, MiddlewareArgs>(
+  const handler = makeAdapterHandler<
+    [FastifyRequest, FastifyReply],
+    AdapterArgs
+  >(
+    (req, res) => Effect.succeed({ req, res }),
+    (req) => toWebRequest(req),
     opts,
     "fastify",
   );
-  const getBuildPerms = buildPermissionsInfoHandler<TRouter>(opts);
 
-  const POST: RouteHandlerMethod = async (req, res) => {
-    const response = await runRequestHandlerAsync(
-      requestHandler,
-      {
-        req: toWebRequest(req),
-        middlewareArgs: { req, res, event: undefined },
-      },
-      opts.config,
-    );
-
-    if (response.success === false) {
-      void res
-        .status(getStatusCodeFromError(response.error))
-        .headers({ "x-uploadthing-version": UPLOADTHING_VERSION })
-        .send(formatError(response.error, opts.router));
-      return;
-    }
-
-    void res
-      .headers({ "x-uploadthing-version": UPLOADTHING_VERSION })
+  fastify.all("/api/uploadthing", async (req, res) => {
+    const response = await handler(req, res);
+    return res
+      .status(response.status)
+      .headers(Object.fromEntries(response.headers))
       .send(response.body);
-  };
-
-  const GET: RouteHandlerMethod = async (req, res) => {
-    void res
-      .status(200)
-      .headers({
-        "x-uploadthing-version": UPLOADTHING_VERSION,
-      })
-      .send(getBuildPerms());
-  };
-
-  fastify.post("/api/uploadthing", POST).get("/api/uploadthing", GET);
+  });
 
   done();
 };
-
-/**
- * @deprecated Use {@link createRouteHandler} instead
- */
-export const fastifyUploadthingPlugin = createRouteHandler;

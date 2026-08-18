@@ -1,46 +1,34 @@
 import * as Arr from "effect/Array";
-import * as Cause from "effect/Cause";
-import * as Console from "effect/Console";
-import * as Effect from "effect/Effect";
-import { unsafeCoerce } from "effect/Function";
-import * as Option from "effect/Option";
-import * as Runtime from "effect/Runtime";
+import * as Micro from "effect/Micro";
 
-import type {
-  ExpandedRouteConfig,
-  FetchError,
-  InvalidJsonError,
-} from "@uploadthing/shared";
+import type { ExpandedRouteConfig, FetchEsque } from "@uploadthing/shared";
 import {
-  exponentialBackoff,
+  createIdentityProxy,
   FetchContext,
-  fetchEff,
   fileSizeToBytes,
-  getErrorTypeFromStatusCode,
-  getTypeFromFileName,
-  isObject,
+  matchFileType,
   objectKeys,
-  parseResponseJson,
   resolveMaybeUrlArg,
-  RetryError,
-  UploadThingError,
+  UploadAbortedError,
+  UploadPausedError,
 } from "@uploadthing/shared";
 
 import * as pkgJson from "../package.json";
-import { UPLOADTHING_VERSION } from "./internal/constants";
-import { uploadMultipartWithProgress } from "./internal/multi-part.browser";
-import { uploadPresignedPostWithProgress } from "./internal/presigned-post.browser";
-import type {
-  FileRouter,
-  inferEndpointOutput,
-  PresignedURLs,
-} from "./internal/types";
-import type { UTReporter } from "./internal/ut-reporter";
-import { createUTReporter } from "./internal/ut-reporter";
+import type { Deferred } from "./_internal/deferred";
+import { createDeferred } from "./_internal/deferred";
+import { generateTraceHeaders } from "./_internal/random-hex";
+import { uploadFile, uploadFilesInternal } from "./_internal/upload-browser";
+import { createUTReporter } from "./_internal/ut-reporter";
 import type {
   ClientUploadedFileData,
+  CreateUploadOptions,
+  EndpointArg,
+  FileRouter,
   GenerateUploaderOptions,
   inferEndpointInput,
+  inferEndpointOutput,
+  NewPresignedUrl,
+  RouteRegistry,
   UploadFilesOptions,
 } from "./types";
 
@@ -53,6 +41,14 @@ export {
   generateMimeTypes,
   /** @public */
   generatePermittedFileTypes,
+  /** @public */
+  bytesToFileSize,
+  /** @public */
+  allowedContentTextLabelGenerator,
+  /** @public */
+  UploadAbortedError,
+  /** @public */
+  UploadPausedError,
 } from "@uploadthing/shared";
 
 /**
@@ -63,10 +59,10 @@ export const isValidFileType = (
   file: File,
   routeConfig: ExpandedRouteConfig,
 ): boolean =>
-  Effect.runSync(
-    getTypeFromFileName(file.name, objectKeys(routeConfig)).pipe(
-      Effect.flatMap((type) => Effect.succeed(file.type.includes(type))),
-      Effect.catchAll(() => Effect.succeed(false)),
+  Micro.runSync(
+    matchFileType(file, objectKeys(routeConfig)).pipe(
+      Micro.map((type) => file.type.includes(type)),
+      Micro.orElseSucceed(() => false),
     ),
   );
 
@@ -78,179 +74,227 @@ export const isValidFileSize = (
   file: File,
   routeConfig: ExpandedRouteConfig,
 ): boolean =>
-  Effect.runSync(
-    getTypeFromFileName(file.name, objectKeys(routeConfig)).pipe(
-      Effect.flatMap((type) => fileSizeToBytes(routeConfig[type]!.maxFileSize)),
-      Effect.flatMap((maxFileSize) => Effect.succeed(file.size <= maxFileSize)),
-      Effect.catchAll(() => Effect.succeed(false)),
+  Micro.runSync(
+    matchFileType(file, objectKeys(routeConfig)).pipe(
+      Micro.flatMap((type) => fileSizeToBytes(routeConfig[type]!.maxFileSize)),
+      Micro.map((maxFileSize) => file.size <= maxFileSize),
+      Micro.orElseSucceed(() => false),
     ),
   );
 
-const uploadFilesInternal = <
-  TRouter extends FileRouter,
-  TEndpoint extends keyof TRouter,
-  TSkipPolling extends boolean = false,
-  TServerOutput = false extends TSkipPolling
-    ? inferEndpointOutput<TRouter[TEndpoint]>
-    : null,
->(
-  endpoint: TEndpoint,
-  opts: UploadFilesOptions<TRouter, TEndpoint, TSkipPolling>,
-): Effect.Effect<
-  ClientUploadedFileData<TServerOutput>[],
-  // TODO: Handle these errors instead of letting them bubble
-  UploadThingError | RetryError | FetchError | InvalidJsonError,
-  FetchContext
-> => {
-  // classic service right here
-  const reportEventToUT = createUTReporter({
-    endpoint: String(endpoint),
-    package: opts.package,
-    url: resolveMaybeUrlArg(opts.url),
-    headers: opts.headers,
-  });
-
-  return Effect.flatMap(
-    reportEventToUT("upload", {
-      input: "input" in opts ? opts.input : null,
-      files: opts.files.map((f) => ({
-        name: f.name,
-        size: f.size,
-        type: f.type,
-      })),
-    }),
-    Effect.forEach(
-      (presigned) =>
-        uploadFile<TRouter, TEndpoint, TSkipPolling, TServerOutput>(
-          String(endpoint),
-          { ...opts, reportEventToUT },
-          presigned,
-        ),
-      { concurrency: 6 },
-    ),
-  );
-};
-
+/**
+ * Generate a typed uploader for a given FileRouter
+ * @public
+ */
 export const genUploader = <TRouter extends FileRouter>(
-  initOpts: GenerateUploaderOptions,
+  initOpts?: GenerateUploaderOptions,
 ) => {
-  return <
+  const routeRegistry = createIdentityProxy<RouteRegistry<TRouter>>();
+
+  const controllableUpload = async <
     TEndpoint extends keyof TRouter,
-    TSkipPolling extends boolean = false,
+    TServerOutput = inferEndpointOutput<TRouter[TEndpoint]>,
   >(
-    endpoint: TEndpoint,
+    slug: EndpointArg<TRouter, TEndpoint>,
     opts: Omit<
-      UploadFilesOptions<TRouter, TEndpoint, TSkipPolling>,
+      CreateUploadOptions<TRouter[TEndpoint]>,
       keyof GenerateUploaderOptions
     >,
-  ) =>
-    uploadFilesInternal<TRouter, TEndpoint, TSkipPolling>(endpoint, {
-      ...opts,
+  ) => {
+    const uploads = new Map<
+      File,
+      {
+        presigned: NewPresignedUrl;
+        deferred: Deferred<ClientUploadedFileData<TServerOutput>>;
+      }
+    >();
+
+    const endpoint = typeof slug === "function" ? slug(routeRegistry) : slug;
+
+    const traceHeaders = generateTraceHeaders();
+    const utReporter = createUTReporter({
+      endpoint: String(endpoint),
+      package: initOpts?.package ?? "uploadthing/client",
       url: resolveMaybeUrlArg(initOpts?.url),
-      package: initOpts.package,
+      headers: opts.headers,
+      traceHeaders,
+    });
+    const fetchFn: FetchEsque = initOpts?.fetch ?? window.fetch;
+
+    const presigneds = await Micro.runPromise(
+      utReporter("upload", {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        input: "input" in opts ? (opts.input as any) : null,
+        files: opts.files.map((f) => ({
+          name: f.name,
+          size: f.size,
+          type: f.type,
+          lastModified: f.lastModified,
+        })),
+      }).pipe(Micro.provideService(FetchContext, fetchFn)),
+    );
+
+    const totalSize = opts.files.reduce((acc, f) => acc + f.size, 0);
+    let totalLoaded = 0;
+
+    const uploadEffect = (file: File, presigned: NewPresignedUrl) =>
+      uploadFile(file, presigned, {
+        traceHeaders,
+        onUploadProgress: (progressEvent) => {
+          totalLoaded += progressEvent.delta;
+          opts.onUploadProgress?.({
+            ...progressEvent,
+            file,
+            progress: Math.round((progressEvent.loaded / file.size) * 100),
+            totalLoaded,
+            totalProgress: Math.round((totalLoaded / totalSize) * 100),
+          });
+        },
+      }).pipe(Micro.provideService(FetchContext, fetchFn));
+
+    for (const [i, p] of presigneds.entries()) {
+      const file = opts.files[i];
+      if (!file) continue;
+
+      const deferred = createDeferred<ClientUploadedFileData<TServerOutput>>();
+      uploads.set(file, { deferred, presigned: p });
+
+      void Micro.runPromiseExit(uploadEffect(file, p), {
+        signal: deferred.ac.signal,
+      })
+        .then((result) => {
+          if (result._tag === "Success") {
+            return deferred.resolve(result.value);
+          } else if (result.cause._tag === "Interrupt") {
+            throw new UploadPausedError();
+          }
+          throw Micro.causeSquash(result.cause);
+        })
+        .catch((err) => {
+          if (err instanceof UploadPausedError) return;
+          deferred.reject(err);
+        });
+    }
+
+    /**
+     * Pause an ongoing upload
+     * @param file The file upload you want to pause. Can be omitted to pause all files
+     */
+    const pauseUpload = (file?: File) => {
+      const files = Arr.ensure(file ?? opts.files);
+      for (const file of files) {
+        const upload = uploads.get(file);
+        if (!upload) return;
+
+        if (upload.deferred.ac.signal.aborted) {
+          // Cancel the upload if it's already been paused
+          throw new UploadAbortedError();
+        }
+
+        upload.deferred.ac.abort();
+      }
+    };
+
+    /**
+     * Resume a paused upload
+     * @param file The file upload you want to resume. Can be omitted to resume all files
+     */
+    const resumeUpload = (file?: File) => {
+      const files = Arr.ensure(file ?? opts.files);
+      for (const file of files) {
+        const upload = uploads.get(file);
+        if (!upload) throw "No upload found";
+
+        upload.deferred.ac = new AbortController();
+        void Micro.runPromiseExit(uploadEffect(file, upload.presigned), {
+          signal: upload.deferred.ac.signal,
+        })
+          .then((result) => {
+            if (result._tag === "Success") {
+              return upload.deferred.resolve(result.value);
+            } else if (result.cause._tag === "Interrupt") {
+              throw new UploadPausedError();
+            }
+            throw Micro.causeSquash(result.cause);
+          })
+          .catch((err) => {
+            if (err instanceof UploadPausedError) return;
+            upload.deferred.reject(err);
+          });
+      }
+    };
+
+    /**
+     * Wait for an upload to complete
+     * @param file The file upload you want to wait for. Can be omitted to wait for all files
+     */
+    const done = async <T extends File | void = void>(
+      file?: T,
+    ): Promise<
+      T extends File
+        ? ClientUploadedFileData<TServerOutput>
+        : ClientUploadedFileData<TServerOutput>[]
+    > => {
+      const promises = [];
+
+      const files = Arr.ensure(file ?? opts.files);
+      for (const file of files) {
+        const upload = uploads.get(file);
+        if (!upload) throw "No upload found";
+
+        promises.push(upload.deferred.promise);
+      }
+
+      const results = await Promise.all(promises);
+      return (file ? results[0] : results) as never;
+    };
+
+    return { pauseUpload, resumeUpload, done };
+  };
+
+  /**
+   * One step upload function that both requests presigned URLs
+   * and then uploads the files to UploadThing
+   */
+  const typedUploadFiles = <TEndpoint extends keyof TRouter>(
+    slug: EndpointArg<TRouter, TEndpoint>,
+    opts: Omit<
+      UploadFilesOptions<TRouter[TEndpoint]>,
+      keyof GenerateUploaderOptions
+    >,
+  ) => {
+    const endpoint = typeof slug === "function" ? slug(routeRegistry) : slug;
+    const fetchFn: FetchEsque = initOpts?.fetch ?? window.fetch;
+
+    return uploadFilesInternal<TRouter, TEndpoint>(endpoint, {
+      ...opts,
+      skipPolling: {} as never, // Remove in a future version, it's type right not is an ErrorMessage<T> to help migrations.
+      url: resolveMaybeUrlArg(initOpts?.url),
+      package: initOpts?.package ?? "uploadthing/client",
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       input: (opts as any).input as inferEndpointInput<TRouter[TEndpoint]>,
     })
-      .pipe(
-        Effect.provideService(FetchContext, {
-          fetch: globalThis.fetch.bind(globalThis),
-          baseHeaders: {
-            "x-uploadthing-version": UPLOADTHING_VERSION,
-            "x-uploadthing-api-key": undefined,
-            "x-uploadthing-fe-package": initOpts.package,
-            "x-uploadthing-be-adapter": undefined,
-          },
-        }),
-        Effect.runPromise,
+      .pipe(Micro.provideService(FetchContext, fetchFn), (effect) =>
+        Micro.runPromiseExit(effect, opts.signal && { signal: opts.signal }),
       )
-      .catch((error) => {
-        if (!Runtime.isFiberFailure(error)) throw error;
-        throw Cause.squash(error[Runtime.FiberFailureCauseId]);
+      .then((exit) => {
+        if (exit._tag === "Success") {
+          return exit.value;
+        } else if (exit.cause._tag === "Interrupt") {
+          throw new UploadAbortedError();
+        }
+        throw Micro.causeSquash(exit.cause);
       });
+  };
+
+  return {
+    uploadFiles: typedUploadFiles,
+    createUpload: controllableUpload,
+    /**
+     * Identity object that can be used instead of raw strings
+     * that allows "Go to definition" in your IDE to bring you
+     * to the backend definition of a route.
+     */
+    routeRegistry,
+  };
 };
-
-type Done = { status: "done"; callbackData: unknown };
-type StillWaiting = { status: "still waiting" };
-type PollingResponse = Done | StillWaiting;
-
-const isPollingResponse = (input: unknown): input is PollingResponse => {
-  if (!isObject(input)) return false;
-  if (input.status === "done") return "callbackData" in input;
-  return input.status === "still waiting";
-};
-
-const isPollingDone = (input: PollingResponse): input is Done => {
-  return input.status === "done";
-};
-
-const uploadFile = <
-  TRouter extends FileRouter,
-  TEndpoint extends keyof TRouter,
-  TSkipPolling extends boolean = false,
-  TServerOutput = false extends TSkipPolling
-    ? inferEndpointOutput<TRouter[TEndpoint]>
-    : null,
->(
-  slug: string,
-  opts: UploadFilesOptions<TRouter, TEndpoint, TSkipPolling> & {
-    reportEventToUT: UTReporter;
-  },
-  presigned: PresignedURLs[number],
-) =>
-  Arr.findFirst(opts.files, (file) => file.name === presigned.fileName).pipe(
-    Effect.tapError(() =>
-      Console.error("No file found for presigned URL", presigned),
-    ),
-    Effect.mapError(
-      () =>
-        new UploadThingError({
-          code: "NOT_FOUND",
-          message: "No file found for presigned URL",
-          cause: `Expected file with name ${presigned.fileName} but got '${opts.files.join(",")}'`,
-        }),
-    ),
-    Effect.tap((file) => opts.onUploadBegin?.({ file: file.name })),
-    Effect.tap((file) =>
-      "urls" in presigned
-        ? uploadMultipartWithProgress(file, presigned, opts)
-        : uploadPresignedPostWithProgress(file, presigned, opts),
-    ),
-    Effect.zip(
-      fetchEff(presigned.pollingUrl, {
-        headers: { authorization: presigned.pollingJwt },
-      }).pipe(
-        Effect.flatMap(parseResponseJson),
-        Effect.catchTag("BadRequestError", (e) =>
-          Effect.fail(
-            new UploadThingError({
-              code: getErrorTypeFromStatusCode(e.status),
-              message: e.message,
-              cause: e,
-            }),
-          ),
-        ),
-        Effect.filterOrDieMessage(
-          isPollingResponse,
-          "received a non PollingResponse from the polling endpoint",
-        ),
-        Effect.filterOrFail(isPollingDone, () => new RetryError()),
-        Effect.map(({ callbackData }) => callbackData),
-        Effect.retry({
-          while: (res) => res instanceof RetryError,
-          schedule: exponentialBackoff(),
-        }),
-        Effect.when(() => !opts.skipPolling),
-        Effect.map(Option.getOrNull),
-        Effect.map(unsafeCoerce<unknown, TServerOutput>),
-      ),
-    ),
-    Effect.map(([file, serverData]) => ({
-      name: file.name,
-      size: file.size,
-      key: presigned.key,
-      serverData,
-      url: "https://utfs.io/f/" + presigned.key,
-      customId: presigned.customId,
-      type: file.type,
-    })),
-  );

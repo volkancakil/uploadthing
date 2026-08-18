@@ -1,27 +1,32 @@
-import * as S from "@effect/schema/Schema";
+import type * as FetchHttpClient from "@effect/platform/FetchHttpClient";
+import * as HttpClient from "@effect/platform/HttpClient";
+import type * as HttpClientError from "@effect/platform/HttpClientError";
+import * as HttpClientRequest from "@effect/platform/HttpClientRequest";
+import * as HttpClientResponse from "@effect/platform/HttpClientResponse";
+import * as Arr from "effect/Array";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import type { ManagedRuntime } from "effect/ManagedRuntime";
+import type { ParseError } from "effect/ParseResult";
+import * as Redacted from "effect/Redacted";
+import * as S from "effect/Schema";
 
-import type {
-  ACL,
-  FetchContextService,
-  FetchEsque,
-  MaybeUrl,
-  SerializedUploadThingError,
-} from "@uploadthing/shared";
+import type { ACL, FetchEsque, MaybeUrl } from "@uploadthing/shared";
 import {
-  asArray,
-  FetchContext,
-  fetchEff,
-  generateUploadThingURL,
-  parseResponseJson,
+  generateSignedURL,
+  parseTimeToSeconds,
   UploadThingError,
 } from "@uploadthing/shared";
 
-import { UPLOADTHING_VERSION } from "../internal/constants";
-import { getApiKeyOrThrow } from "../internal/get-api-key";
-import { incompatibleNodeGuard } from "../internal/incompat-node-guard";
-import type { LogLevel } from "../internal/logger";
-import { ConsolaLogger, withMinimalLogLevel } from "../internal/logger";
+import {
+  ApiUrl,
+  UfsAppIdLocation,
+  UfsHost,
+  UPLOADTHING_VERSION,
+  UTToken,
+} from "../_internal/config";
+import { logHttpClientError, logHttpClientResponse } from "../_internal/logger";
+import { makeRuntime } from "../_internal/runtime";
 import type {
   ACLUpdateOptions,
   DeleteFilesOptions,
@@ -36,88 +41,88 @@ import type {
   UTApiOptions,
 } from "./types";
 import { UTFile } from "./ut-file";
-import {
-  downloadFiles,
-  guardServerOnly,
-  parseTimeToSeconds,
-  uploadFilesInternal,
-} from "./utils";
+import { downloadFile, guardServerOnly, uploadFile } from "./utils";
 
 export { UTFile };
 
 export class UTApi {
   private fetch: FetchEsque;
-  private defaultHeaders: FetchContextService["baseHeaders"];
   private defaultKeyType: "fileKey" | "customId";
-  private logLevel: LogLevel | undefined;
-  constructor(opts?: UTApiOptions) {
+  private runtime: ManagedRuntime<
+    HttpClient.HttpClient | FetchHttpClient.Fetch,
+    UploadThingError
+  >;
+  private opts: UTApiOptions;
+  constructor(options?: UTApiOptions) {
     // Assert some stuff
     guardServerOnly();
-    incompatibleNodeGuard();
-    const apiKey = getApiKeyOrThrow(opts?.apiKey);
-
-    this.fetch = opts?.fetch ?? globalThis.fetch;
-    this.defaultHeaders = {
-      "x-uploadthing-api-key": apiKey,
-      "x-uploadthing-version": UPLOADTHING_VERSION,
-      "x-uploadthing-be-adapter": "server-sdk",
-      "x-uploadthing-fe-package": undefined,
-    };
-    this.defaultKeyType = opts?.defaultKeyType ?? "fileKey";
-    this.logLevel = opts?.logLevel;
+    this.opts = options ?? {};
+    this.fetch = this.opts.fetch ?? globalThis.fetch;
+    this.defaultKeyType = this.opts.defaultKeyType ?? "fileKey";
+    this.runtime = makeRuntime(this.fetch, this.opts);
   }
 
   private requestUploadThing = <T>(
     pathname: `/${string}`,
     body: Record<string, unknown>,
     responseSchema: S.Schema<T, any>,
-  ) => {
-    const url = generateUploadThingURL(pathname);
-    Effect.runSync(
-      Effect.logDebug("Requesting UploadThing:", {
-        url,
-        body,
-        headers: this.defaultHeaders,
-      }),
+  ) =>
+    Effect.gen(this, function* () {
+      const { apiKey } = yield* UTToken;
+      const baseUrl = yield* ApiUrl;
+      const httpClient = (yield* HttpClient.HttpClient).pipe(
+        HttpClient.filterStatusOk,
+      );
+
+      return yield* HttpClientRequest.post(pathname).pipe(
+        HttpClientRequest.prependUrl(baseUrl),
+        HttpClientRequest.bodyUnsafeJson(body),
+        HttpClientRequest.setHeaders({
+          "x-uploadthing-version": UPLOADTHING_VERSION,
+          "x-uploadthing-be-adapter": "server-sdk",
+          "x-uploadthing-api-key": Redacted.value(apiKey),
+        }),
+        httpClient.execute,
+        Effect.tapBoth({
+          onSuccess: logHttpClientResponse("UploadThing API Response"),
+          onFailure: logHttpClientError("Failed to request UploadThing API"),
+        }),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(responseSchema)),
+        Effect.scoped,
+      );
+    }).pipe(
+      Effect.catchTag(
+        "ConfigError",
+        (e) =>
+          new UploadThingError({
+            code: "INVALID_SERVER_CONFIG",
+            message:
+              "There was an error with the server configuration. More info can be found on this error's `cause` property",
+            cause: e,
+          }),
+      ),
+      Effect.withLogSpan("utapi.#requestUploadThing"),
     );
 
-    const headers = new Headers([["Content-Type", "application/json"]]);
-    for (const [key, value] of Object.entries(this.defaultHeaders)) {
-      if (typeof value === "string") headers.set(key, value);
+  private executeAsync = async <A>(
+    program: Effect.Effect<
+      A,
+      UploadThingError | ParseError | HttpClientError.HttpClientError,
+      HttpClient.HttpClient
+    >,
+    signal?: AbortSignal,
+  ) => {
+    const exit = await program.pipe(
+      Effect.withLogSpan("utapi.#executeAsync"),
+      (e) => this.runtime.runPromiseExit(e, signal ? { signal } : undefined),
+    );
+
+    if (exit._tag === "Failure") {
+      throw Cause.squash(exit.cause);
     }
 
-    return fetchEff(url, {
-      method: "POST",
-      cache: "no-store",
-      body: JSON.stringify(body),
-      headers,
-    }).pipe(
-      Effect.andThen(parseResponseJson),
-      Effect.andThen(S.decodeUnknown(responseSchema)),
-      Effect.catchTag("FetchError", (err) =>
-        Effect.logError("Request failed:", err).pipe(
-          Effect.andThen(() => Effect.die(err)),
-        ),
-      ),
-      Effect.catchTag("ParseError", (err) =>
-        Effect.logError("Response parsing failed:", err).pipe(
-          Effect.andThen(() => Effect.die(err)),
-        ),
-      ),
-      Effect.tap((res) => Effect.logDebug("UploadThing response:", res)),
-    );
+    return exit.value;
   };
-
-  private executeAsync = <A, E>(program: Effect.Effect<A, E, FetchContext>) =>
-    program.pipe(
-      withMinimalLogLevel(this.logLevel),
-      Effect.provide(ConsolaLogger),
-      Effect.provideService(FetchContext, {
-        fetch: this.fetch,
-        baseHeaders: this.defaultHeaders,
-      }),
-      Effect.runPromise,
-    );
 
   /**
    * Upload files to UploadThing storage.
@@ -139,24 +144,45 @@ export class UTApi {
     files: FileEsque[],
     opts?: UploadFilesOptions,
   ): Promise<UploadFileResult[]>;
-  async uploadFiles(
+  uploadFiles(
     files: FileEsque | FileEsque[],
     opts?: UploadFilesOptions,
   ): Promise<UploadFileResult | UploadFileResult[]> {
     guardServerOnly();
 
-    const uploads = await this.executeAsync(
-      Effect.flatMap(
-        uploadFilesInternal({
-          files: asArray(files),
-          contentDisposition: opts?.contentDisposition ?? "inline",
-          metadata: opts?.metadata ?? {},
-          acl: opts?.acl,
-        }),
-        (ups) => Effect.succeed(Array.isArray(files) ? ups : ups[0]),
-      ).pipe(Effect.tap((res) => Effect.logDebug("Finished uploading:", res))),
+    const concurrency = opts?.concurrency ?? 1;
+    if (concurrency < 1 || concurrency > 25) {
+      throw new UploadThingError({
+        code: "BAD_REQUEST",
+        message: "concurrency must be a positive integer between 1 and 25",
+      });
+    }
+
+    const program: Effect.Effect<
+      UploadFileResult | UploadFileResult[],
+      never,
+      HttpClient.HttpClient
+    > = Effect.forEach(
+      Arr.ensure(files),
+      (file) =>
+        uploadFile(file, opts ?? {}).pipe(
+          Effect.match({
+            onSuccess: (data) => ({ data, error: null }),
+            onFailure: (error) => ({ data: null, error }),
+          }),
+        ),
+      { concurrency },
+    ).pipe(
+      Effect.map((ups) => (Array.isArray(files) ? ups : ups[0]!)),
+      Effect.tap((res) =>
+        Effect.logDebug("Finished uploading").pipe(
+          Effect.annotateLogs("uploadResult", res),
+        ),
+      ),
+      Effect.withLogSpan("uploadFiles"),
     );
-    return uploads;
+
+    return this.executeAsync(program, opts?.signal);
   }
 
   /**
@@ -180,41 +206,48 @@ export class UTApi {
     urls: (MaybeUrl | UrlWithOverrides)[],
     opts?: UploadFilesOptions,
   ): Promise<UploadFileResult[]>;
-  async uploadFilesFromUrl(
+  uploadFilesFromUrl(
     urls: MaybeUrl | UrlWithOverrides | (MaybeUrl | UrlWithOverrides)[],
     opts?: UploadFilesOptions,
   ): Promise<UploadFileResult | UploadFileResult[]> {
     guardServerOnly();
 
-    const downloadErrors: Record<number, SerializedUploadThingError> = {};
+    const concurrency = opts?.concurrency ?? 1;
+    if (concurrency < 1 || concurrency > 25) {
+      throw new UploadThingError({
+        code: "BAD_REQUEST",
+        message: "concurrency must be a positive integer between 1 and 25",
+      });
+    }
 
-    const uploads = await this.executeAsync(
-      downloadFiles(asArray(urls), downloadErrors).pipe(
-        Effect.andThen((files) => files.filter((f): f is UTFile => f != null)),
-        Effect.andThen((files) =>
-          uploadFilesInternal({
-            files,
-            contentDisposition: opts?.contentDisposition ?? "inline",
-            metadata: opts?.metadata ?? {},
-            acl: opts?.acl,
+    const program: Effect.Effect<
+      UploadFileResult | UploadFileResult[],
+      never,
+      HttpClient.HttpClient
+    > = Effect.forEach(
+      Arr.ensure(urls),
+      (url) =>
+        downloadFile(url).pipe(
+          Effect.flatMap((file) => uploadFile(file, opts ?? {})),
+          Effect.match({
+            onSuccess: (data) => ({ data, error: null }),
+            onFailure: (error) => ({ data: null, error }),
           }),
         ),
-      ),
-    );
+      { concurrency },
+    )
+      .pipe(
+        Effect.map((ups) => (Array.isArray(urls) ? ups : ups[0]!)),
+        Effect.tap((res) =>
+          Effect.logDebug("Finished uploading").pipe(
+            Effect.annotateLogs("uploadResult", res),
+          ),
+        ),
+        Effect.withLogSpan("uploadFiles"),
+      )
+      .pipe(Effect.withLogSpan("uploadFilesFromUrl"));
 
-    /** Put it all back together, preserve the order of files */
-    const responses = asArray(urls).map((_, index) => {
-      if (downloadErrors[index]) {
-        return { data: null, error: downloadErrors[index] };
-      }
-      return uploads.shift()!;
-    });
-
-    /** Return single object or array based on input urls */
-    const uploadFileResponse = Array.isArray(urls) ? responses : responses[0];
-
-    Effect.runSync(Effect.logDebug("Finished uploading:", uploadFileResponse));
-    return uploadFileResponse;
+    return this.executeAsync(program, opts?.signal);
   }
 
   /**
@@ -234,18 +267,21 @@ export class UTApi {
     guardServerOnly();
     const { keyType = this.defaultKeyType } = opts ?? {};
 
-    const responseSchema = S.Struct({
+    class DeleteFileResponse extends S.Class<DeleteFileResponse>(
+      "DeleteFileResponse",
+    )({
       success: S.Boolean,
-    });
+      deletedCount: S.Number,
+    }) {}
 
     return await this.executeAsync(
       this.requestUploadThing(
-        "/api/deleteFiles",
+        "/v6/deleteFiles",
         keyType === "fileKey"
-          ? { fileKeys: asArray(keys) }
-          : { customIds: asArray(keys) },
-        responseSchema,
-      ),
+          ? { fileKeys: Arr.ensure(keys) }
+          : { customIds: Arr.ensure(keys) },
+        DeleteFileResponse,
+      ).pipe(Effect.withLogSpan("deleteFiles")),
     );
   };
 
@@ -260,27 +296,33 @@ export class UTApi {
    * @example
    * const data = await getFileUrls(["2e0fdb64-9957-4262-8e45-f372ba903ac8_image.jpg","1649353b-04ea-48a2-9db7-31de7f562c8d_image2.jpg"])
    * console.log(data) // [{key: "2e0fdb64-9957-4262-8e45-f372ba903ac8_image.jpg", url: "https://uploadthing.com/f/2e0fdb64-9957-4262-8e45-f372ba903ac8_image.jpg" },{key: "1649353b-04ea-48a2-9db7-31de7f562c8d_image2.jpg", url: "https://uploadthing.com/f/1649353b-04ea-48a2-9db7-31de7f562c8d_image2.jpg"}]
+   *
+   * @deprecated - See https://docs.uploadthing.com/working-with-files#accessing-files for info how to access files
    */
   getFileUrls = async (keys: string[] | string, opts?: GetFileUrlsOptions) => {
     guardServerOnly();
 
     const { keyType = this.defaultKeyType } = opts ?? {};
 
-    const responseSchema = S.Struct({
+    class GetFileUrlResponse extends S.Class<GetFileUrlResponse>(
+      "GetFileUrlResponse",
+    )({
       data: S.Array(
         S.Struct({
           key: S.String,
           url: S.String,
         }),
       ),
-    });
+    }) {}
 
     return await this.executeAsync(
       this.requestUploadThing(
-        "/api/getFileUrl",
-        keyType === "fileKey" ? { fileKeys: keys } : { customIds: keys },
-        responseSchema,
-      ),
+        "/v6/getFileUrl",
+        keyType === "fileKey"
+          ? { fileKeys: Arr.ensure(keys) }
+          : { customIds: Arr.ensure(keys) },
+        GetFileUrlResponse,
+      ).pipe(Effect.withLogSpan("getFileUrls")),
     );
   };
 
@@ -297,66 +339,146 @@ export class UTApi {
   listFiles = async (opts?: ListFilesOptions) => {
     guardServerOnly();
 
-    const responseSchema = S.Struct({
+    class ListFileResponse extends S.Class<ListFileResponse>(
+      "ListFileResponse",
+    )({
+      hasMore: S.Boolean,
       files: S.Array(
         S.Struct({
           id: S.String,
+          customId: S.NullOr(S.String),
           key: S.String,
           name: S.String,
-          customId: S.NullOr(S.String),
+          size: S.Number,
           status: S.Literal(
             "Deletion Pending",
             "Failed",
             "Uploaded",
             "Uploading",
           ),
+          uploadedAt: S.Number,
         }),
       ),
-    });
+    }) {}
 
     return await this.executeAsync(
-      this.requestUploadThing("/api/listFiles", { ...opts }, responseSchema),
+      this.requestUploadThing(
+        "/v6/listFiles",
+        { ...opts },
+        ListFileResponse,
+      ).pipe(Effect.withLogSpan("listFiles")),
     );
   };
 
   renameFiles = async (updates: RenameFileUpdate | RenameFileUpdate[]) => {
     guardServerOnly();
 
-    const responseSchema = S.Struct({
+    class RenameFileResponse extends S.Class<RenameFileResponse>(
+      "RenameFileResponse",
+    )({
       success: S.Boolean,
-    });
+    }) {}
 
     return await this.executeAsync(
       this.requestUploadThing(
-        "/api/renameFiles",
-        { updates: asArray(updates) },
-        responseSchema,
-      ),
+        "/v6/renameFiles",
+        { updates: Arr.ensure(updates) },
+        RenameFileResponse,
+      ).pipe(Effect.withLogSpan("renameFiles")),
     );
   };
-
-  /** @deprecated Use {@link renameFiles} instead. */
-  public renameFile = this.renameFiles;
 
   getUsageInfo = async () => {
     guardServerOnly();
 
-    const responseSchema = S.Struct({
+    class GetUsageInfoResponse extends S.Class<GetUsageInfoResponse>(
+      "GetUsageInfoResponse",
+    )({
       totalBytes: S.Number,
-      totalReadable: S.String,
       appTotalBytes: S.Number,
-      appTotalReadable: S.String,
       filesUploaded: S.Number,
       limitBytes: S.Number,
-      limitReadable: S.String,
-    });
+    }) {}
 
     return await this.executeAsync(
-      this.requestUploadThing("/api/getUsageInfo", {}, responseSchema),
+      this.requestUploadThing(
+        "/v6/getUsageInfo",
+        {},
+        GetUsageInfoResponse,
+      ).pipe(Effect.withLogSpan("getUsageInfo")),
     );
   };
 
-  /** Request a presigned url for a private file(s) */
+  /**
+   * Generate a presigned url for a private file
+   * Unlike {@link getSignedURL}, this method does not make a fetch request to the UploadThing API
+   * and is the recommended way to generate a presigned url for a private file.
+   **/
+  generateSignedURL = async (key: string, opts?: GetSignedURLOptions) => {
+    guardServerOnly();
+
+    const expiresIn = parseTimeToSeconds(opts?.expiresIn ?? "5 minutes");
+
+    if (opts?.expiresIn && isNaN(expiresIn)) {
+      throw new UploadThingError({
+        code: "BAD_REQUEST",
+        message:
+          "expiresIn must be a valid time string, for example '1d', '2 days', or a number of seconds.",
+      });
+    }
+    if (expiresIn > 86400 * 7) {
+      throw new UploadThingError({
+        code: "BAD_REQUEST",
+        message: "expiresIn must be less than 7 days (604800 seconds).",
+      });
+    }
+
+    const program = Effect.gen(function* () {
+      const { apiKey, appId } = yield* UTToken;
+      const appIdLocation = yield* UfsAppIdLocation;
+      const ufsHost = yield* UfsHost;
+
+      const proto = ufsHost.includes("local") ? "http" : "https";
+      // either subdomain or path style
+      const urlBase =
+        appIdLocation === "subdomain"
+          ? `${proto}://${appId}.${ufsHost}/f/${key}`
+          : `${proto}://${ufsHost}/a/${appId}/${key}`;
+
+      const ufsUrl = yield* generateSignedURL(urlBase, apiKey, {
+        ttlInSeconds: expiresIn,
+      });
+
+      return {
+        ufsUrl,
+      };
+    });
+
+    return await this.executeAsync(
+      program.pipe(
+        Effect.catchTag(
+          "ConfigError",
+          (e) =>
+            new UploadThingError({
+              code: "INVALID_SERVER_CONFIG",
+              message:
+                "There was an error with the server configuration. More info can be found on this error's `cause` property",
+              cause: e,
+            }),
+        ),
+        Effect.withLogSpan("generateSignedURL"),
+      ),
+    );
+  };
+
+  /**
+   * Request a presigned url for a private file(s)
+   * @remarks This method is no longer recommended as it makes a fetch
+   * request to the UploadThing API which incurs redundant latency. It
+   * will be deprecated in UploadThing v8 and removed in UploadThing v9.
+   *
+   * @see {@link generateSignedURL} for a more efficient way to generate a presigned url
+   **/
   getSignedURL = async (key: string, opts?: GetSignedURLOptions) => {
     guardServerOnly();
 
@@ -379,18 +501,21 @@ export class UTApi {
       });
     }
 
-    const responseSchema = S.Struct({
+    class GetSignedUrlResponse extends S.Class<GetSignedUrlResponse>(
+      "GetSignedUrlResponse",
+    )({
       url: S.String,
-    });
+      ufsUrl: S.String,
+    }) {}
 
     return await this.executeAsync(
       this.requestUploadThing(
-        "/api/requestFileAccess",
+        "/v6/requestFileAccess",
         keyType === "fileKey"
           ? { fileKey: key, expiresIn }
           : { customId: key, expiresIn },
-        responseSchema,
-      ),
+        GetSignedUrlResponse,
+      ).pipe(Effect.withLogSpan("getSignedURL")),
     );
   };
 
@@ -418,7 +543,7 @@ export class UTApi {
     guardServerOnly();
 
     const { keyType = this.defaultKeyType } = opts ?? {};
-    const updates = asArray(keys).map((key) => {
+    const updates = Arr.ensure(keys).map((key) => {
       return keyType === "fileKey"
         ? { fileKey: key, acl }
         : { customId: key, acl };
@@ -429,7 +554,11 @@ export class UTApi {
     });
 
     return await this.executeAsync(
-      this.requestUploadThing("/api/updateACL", { updates }, responseSchema),
+      this.requestUploadThing(
+        "/v6/updateACL",
+        { updates },
+        responseSchema,
+      ).pipe(Effect.withLogSpan("updateACL")),
     );
   };
 }

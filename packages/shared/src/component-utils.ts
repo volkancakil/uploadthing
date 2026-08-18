@@ -2,24 +2,50 @@ import type { CSSProperties, ReactNode } from "react";
 import type { JSX } from "solid-js/jsx-runtime";
 import type { RenderFunction, StyleValue } from "vue";
 
-import { mimeTypes } from "@uploadthing/mime-types";
+/**
+ * Use granular imports to better tree-shake
+ * We don't need all the types, and `/application`
+ * entrypoint is ~7k gzip which we can shave off
+ */
+import { audio } from "@uploadthing/mime-types/audio";
+import { image } from "@uploadthing/mime-types/image";
+import { text } from "@uploadthing/mime-types/text";
+import { video } from "@uploadthing/mime-types/video";
 
 import type { ExpandedRouteConfig } from "./types";
 import { objectKeys } from "./utils";
 
-export const generateMimeTypes = (fileTypes: string[]) => {
+export type ProgressGranularity = "all" | "fine" | "coarse";
+export const roundProgress = (
+  progress: number,
+  granularity: ProgressGranularity,
+) => {
+  if (granularity === "all") return progress;
+  if (granularity === "fine") return Math.round(progress);
+  return Math.floor(progress / 10) * 10;
+};
+
+export const generateMimeTypes = (
+  typesOrRouteConfig: string[] | ExpandedRouteConfig,
+) => {
+  const fileTypes = Array.isArray(typesOrRouteConfig)
+    ? typesOrRouteConfig
+    : objectKeys(typesOrRouteConfig);
   if (fileTypes.includes("blob")) return [];
 
   return fileTypes.map((type) => {
     if (type === "pdf") return "application/pdf";
     if (type.includes("/")) return type;
-    return [
-      // Add wildcard to support all subtypes, e.g. image => "image/*"
-      `${type}/*`,
-      // But some browsers/OSes don't support it, so we'll also dump all the mime types
-      // we know that starts with the type, e.g. image => "image/png, image/jpeg, ..."
-      ...objectKeys(mimeTypes).filter((t) => t.startsWith(type)),
-    ].join(", ");
+
+    // Add wildcard to support all subtypes, e.g. image => "image/*"
+    // But some browsers/OSes don't support it, so we'll also dump all the mime types
+    // we know that starts with the type, e.g. image => "image/png, image/jpeg, ..."
+    if (type === "audio") return ["audio/*", ...objectKeys(audio)].join(", ");
+    if (type === "image") return ["image/*", ...objectKeys(image)].join(", ");
+    if (type === "text") return ["text/*", ...objectKeys(text)].join(", ");
+    if (type === "video") return ["video/*", ...objectKeys(video)].join(", ");
+
+    return `${type}/*`;
   });
 };
 
@@ -74,6 +100,7 @@ export const INTERNAL_doFormatting = (config?: ExpandedRouteConfig): string => {
   // Single type uploader label
   const key = allowedTypes[0];
   const formattedKey = formattedTypes[0];
+  if (!key || !formattedKey) return "";
 
   const { maxFileSize, maxFileCount, minFileCount } = config[key]!;
 
@@ -177,4 +204,11 @@ export const contentFieldToContent = <T extends MinCallbackArg>(
 
     return result;
   }
+};
+
+export type ClassListMerger = (
+  ...classes: (string | null | undefined | false)[]
+) => string;
+export const defaultClassListMerger: ClassListMerger = (...classes) => {
+  return classes.filter(Boolean).join(" ");
 };

@@ -3,7 +3,12 @@
   "type": "module",
   "author": "OrJDev",
   "license": "MIT",
-  "version": "6.4.4",
+  "repository": {
+    "type": "git",
+    "url": "github:pingdotgg/uploadthing",
+    "directory": "packages/solid"
+  },
+  "version": "7.3.3",
   "main": "./dist/server.cjs",
   "module": "./dist/server.js",
   "types": "./dist/index.d.ts",
@@ -110,54 +115,27 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@uploadthing/dropzone": "workspace:*",
     "@uploadthing/shared": "workspace:*",
-    "tailwind-merge": "^2.2.1"
+    "file-selector": "0.6.0"
   },
   "devDependencies": {
-    "postcss": "8.4.38",
-    "solid-js": "^1.8.15",
-    "tailwindcss": "^3.4.1",
-    "tsup": "8.0.2",
+    "@uploadthing/eslint-config": "workspace:*",
+    "eslint": "9.25.1",
+    "postcss": "8.4.49",
+    "solid-js": "^1.9.3",
+    "tailwindcss": "^3.4.16",
+    "tsup": "8.3.5",
     "tsup-preset-solid": "2.2.0",
-    "typescript": "^5.4.5",
+    "typescript": "5.8.3",
     "uploadthing": "workspace:*",
-    "wait-on": "^7.2.0"
+    "wait-on": "^8.0.1"
   },
   "peerDependencies": {
     "solid-js": "^1.5.3",
-    "uploadthing": "^6.10.0"
+    "uploadthing": "^7.2.0"
   },
   "keywords": [
     "SolidJS",
     "Uploadthing"
-  ],
-  "eslintConfig": {
-    "root": true,
-    "rules": {
-      "no-restricted-imports": [
-        "error",
-        {
-          "patterns": [
-            {
-              "group": [
-                "@uploadthing/solid",
-                "@uploadthing/solid/*"
-              ],
-              "message": "Use relative src imports instead"
-            }
-          ],
-          "paths": [
-            {
-              "name": "effect",
-              "message": "Use alias imports instead (import * as X from \"effect/X\")"
-            }
-          ]
-        }
-      ]
-    },
-    "extends": [
-      "@uploadthing/eslint-config/base"
-    ]
-  }
+  ]
 }

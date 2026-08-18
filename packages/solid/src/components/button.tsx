@@ -1,14 +1,16 @@
-import { createSignal } from "solid-js";
-import { twMerge } from "tailwind-merge";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 
 import {
   allowedContentTextLabelGenerator,
   contentFieldToContent,
+  defaultClassListMerger,
   generateMimeTypes,
   generatePermittedFileTypes,
+  getFilesFromClipboardEvent,
   resolveMaybeUrlArg,
   styleFieldToClassName,
   styleFieldToCssObject,
+  UploadAbortedError,
 } from "@uploadthing/shared";
 import type {
   ContentField,
@@ -17,9 +19,9 @@ import type {
 } from "@uploadthing/shared";
 import type { FileRouter } from "uploadthing/types";
 
+import { __createUploadThingInternal } from "../create-uploadthing";
 import type { UploadthingComponentProps } from "../types";
-import { INTERNAL_uploadthingHookGen } from "../useUploadThing";
-import { progressWidths, Spinner } from "./shared";
+import { Cancel, Spinner } from "./shared";
 
 type ButtonStyleFieldCallbackArgs = {
   __runtime: "solid";
@@ -27,6 +29,7 @@ type ButtonStyleFieldCallbackArgs = {
   isUploading: () => boolean;
   uploadProgress: () => number;
   fileTypes: () => string[];
+  files: () => File[];
 };
 
 type ButtonAppearance = {
@@ -45,8 +48,7 @@ type ButtonContent = {
 export type UploadButtonProps<
   TRouter extends FileRouter,
   TEndpoint extends keyof TRouter,
-  TSkipPolling extends boolean = false,
-> = UploadthingComponentProps<TRouter, TEndpoint, TSkipPolling> & {
+> = UploadthingComponentProps<TRouter, TEndpoint> & {
   /**
    * @see https://docs.uploadthing.com/theming#style-using-the-classname-prop
    */
@@ -71,128 +73,239 @@ export type UploadButtonProps<
 export function UploadButton<
   TRouter extends FileRouter,
   TEndpoint extends keyof TRouter,
-  TSkipPolling extends boolean = false,
 >(
   props: FileRouter extends TRouter
     ? ErrorMessage<"You forgot to pass the generic">
-    : UploadButtonProps<TRouter, TEndpoint, TSkipPolling>,
+    : UploadButtonProps<TRouter, TEndpoint>,
 ) {
-  const [uploadProgress, setUploadProgress] = createSignal(0);
+  const $props = props as UploadButtonProps<TRouter, TEndpoint>;
+
+  const {
+    mode = "auto",
+    appendOnPaste = false,
+    cn = defaultClassListMerger,
+  } = $props.config ?? {};
+  let acRef = new AbortController();
+
   let inputRef: HTMLInputElement;
-  const $props = props as UploadButtonProps<TRouter, TEndpoint, TSkipPolling>;
+  const [uploadProgress, setUploadProgress] = createSignal(0);
+  const [files, setFiles] = createSignal<File[]>([]);
 
-  const useUploadThing = INTERNAL_uploadthingHookGen<TRouter>({
-    url: resolveMaybeUrlArg($props.url),
-  });
-
-  const uploadedThing = useUploadThing($props.endpoint, {
-    headers: $props.headers,
-    skipPolling: $props.skipPolling,
-    onClientUploadComplete: (res) => {
-      if (inputRef) {
+  const uploadThing = __createUploadThingInternal(
+    resolveMaybeUrlArg($props.url),
+    $props.endpoint,
+    $props.fetch ?? globalThis.fetch,
+    {
+      signal: acRef.signal,
+      headers: $props.headers,
+      onClientUploadComplete: (res) => {
+        setFiles([]);
         inputRef.value = "";
-      }
-      $props.onClientUploadComplete?.(res);
-      setUploadProgress(0);
+        void $props.onClientUploadComplete?.(res);
+        setUploadProgress(0);
+      },
+      uploadProgressGranularity: $props.uploadProgressGranularity,
+      onUploadProgress: (p) => {
+        setUploadProgress(p);
+        $props.onUploadProgress?.(p);
+      },
+      onUploadError: $props.onUploadError,
+      onUploadBegin: $props.onUploadBegin,
+      onBeforeUploadBegin: $props.onBeforeUploadBegin,
     },
-    onUploadProgress: (p) => {
-      setUploadProgress(p);
-      $props.onUploadProgress?.(p);
-    },
-    onUploadError: $props.onUploadError,
-    onUploadBegin: $props.onUploadBegin,
-    onBeforeUploadBegin: $props.onBeforeUploadBegin,
-  });
+  );
 
-  const fileInfo = () =>
-    generatePermittedFileTypes(uploadedThing.permittedFileInfo()?.config);
-
-  const ready = () => fileInfo().fileTypes.length > 0;
-
-  const styleFieldArg = {
-    ready: ready,
-    isUploading: uploadedThing.isUploading,
-    uploadProgress: uploadProgress,
-    fileTypes: () => fileInfo().fileTypes,
-  } as ButtonStyleFieldCallbackArgs;
+  const fileInfo = () => generatePermittedFileTypes(uploadThing.routeConfig());
 
   const state = () => {
-    if (!ready()) return "readying";
-    if (ready() && !uploadedThing.isUploading()) return "ready";
+    const ready = fileInfo().fileTypes.length > 0;
 
+    if ($props.disabled) return "disabled";
+    if (!ready) return "readying";
+    if (!uploadThing.isUploading()) return "ready";
     return "uploading";
   };
 
-  const getUploadButtonText = (fileTypes: string[]) => {
-    if (fileTypes.length === 0) return "Loading...";
-    return `Choose File${fileInfo().multiple ? `(s)` : ``}`;
+  const uploadFiles = (files: File[]) => {
+    const input = "input" in $props ? $props.input : undefined;
+    uploadThing.startUpload(files, input).catch((e) => {
+      if (e instanceof UploadAbortedError) {
+        void $props.onUploadAborted?.();
+      } else {
+        throw e;
+      }
+    });
+  };
+
+  const onUploadClick = (e: MouseEvent) => {
+    if (state() === "uploading") {
+      e.preventDefault();
+      e.stopPropagation();
+
+      acRef.abort();
+      acRef = new AbortController();
+      return;
+    }
+    if (mode === "manual" && files().length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      uploadFiles(files());
+    }
+  };
+
+  createEffect(() => {
+    if (!appendOnPaste) return;
+
+    const controller = new AbortController();
+    const pasteHandler = (e: ClipboardEvent) => {
+      if (document.activeElement !== inputRef) return;
+
+      const pastedFiles = getFilesFromClipboardEvent(e);
+      if (!pastedFiles) return;
+
+      setFiles((prevFiles) => [...prevFiles, ...pastedFiles]);
+
+      $props.onChange?.(files());
+
+      if (mode === "auto") uploadFiles(files());
+    };
+    document.addEventListener("paste", pasteHandler, {
+      signal: controller.signal,
+    });
+
+    onCleanup(() => controller.abort());
+  });
+
+  const styleFieldArg = {
+    ready: () => state() !== "readying",
+    isUploading: uploadThing.isUploading,
+    uploadProgress: uploadProgress,
+    fileTypes: () => fileInfo().fileTypes,
+    files,
+  } as ButtonStyleFieldCallbackArgs;
+
+  const getButtonContent = () => {
+    const customContent = contentFieldToContent(
+      $props.content?.button,
+      styleFieldArg,
+    );
+
+    if (customContent) return customContent;
+
+    if (state() === "readying") return "Loading...";
+
+    if (state() !== "uploading") {
+      if (mode === "manual" && files().length > 0) {
+        return `Upload ${files().length} file${files().length === 1 ? "" : "s"}`;
+      }
+      return `Choose File${fileInfo().multiple ? `(s)` : ``}`;
+    }
+
+    if (uploadProgress() === 100) return <Spinner />;
+
+    return (
+      <span class="z-50">
+        <span class="block group-hover:hidden">
+          {Math.round(uploadProgress())}%
+        </span>
+        <Cancel cn={cn} class="hidden size-4 group-hover:block" />
+      </span>
+    );
   };
 
   return (
     <div
-      class={twMerge(
+      class={cn(
         "flex flex-col items-center justify-center gap-1",
         $props.class,
         styleFieldToClassName($props.appearance?.container, styleFieldArg),
       )}
-      style={styleFieldToCssObject($props.appearance?.container, styleFieldArg)}
+      style={{
+        "--progress-width": `${uploadProgress()}%`,
+        ...styleFieldToCssObject($props.appearance?.container, styleFieldArg),
+      }}
       data-state={state()}
     >
       <label
-        class={twMerge(
-          "relative flex h-10 w-36 cursor-pointer items-center justify-center overflow-hidden rounded-md text-white after:transition-[width] after:duration-500",
-          state() === "readying" && "cursor-not-allowed bg-blue-400",
-          state() === "uploading" &&
-            `bg-blue-400 after:absolute after:left-0 after:h-full after:bg-blue-600 ${
-              progressWidths[uploadProgress()]
-            }`,
-          state() === "ready" && "bg-blue-600",
+        class={cn(
+          "group relative flex h-10 w-36 cursor-pointer items-center justify-center overflow-hidden rounded-md text-white after:transition-[width] after:duration-500 focus-within:ring-2 focus-within:ring-blue-600 focus-within:ring-offset-2",
+          "disabled:pointer-events-none",
+          "data-[state=disabled]:cursor-not-allowed data-[state=readying]:cursor-not-allowed",
+          "data-[state=disabled]:bg-blue-400 data-[state=ready]:bg-blue-600 data-[state=readying]:bg-blue-400 data-[state=uploading]:bg-blue-400",
+          "after:absolute after:left-0 after:h-full after:w-[var(--progress-width)] after:content-[''] data-[state=uploading]:after:bg-blue-600",
           styleFieldToClassName($props.appearance?.button, styleFieldArg),
         )}
         style={styleFieldToCssObject($props.appearance?.button, styleFieldArg)}
         data-state={state()}
         data-ut-element="button"
+        onClick={onUploadClick}
       >
         <input
-          class="hidden"
-          ref={inputRef!}
+          ref={(el) => (inputRef = el)}
+          class="sr-only"
           type="file"
           multiple={fileInfo().multiple}
           accept={generateMimeTypes(fileInfo().fileTypes).join(", ")}
           onChange={(e) => {
             if (!e.target.files) return;
-            const input = "input" in $props ? $props.input : undefined;
-            const files = Array.from(e.target.files);
-            void uploadedThing.startUpload(files, input);
+            const selectedFiles = Array.from(e.target.files);
+
+            $props.onChange?.(selectedFiles);
+
+            if (mode === "manual") {
+              setFiles(selectedFiles);
+              return;
+            }
+
+            uploadFiles(selectedFiles);
           }}
         />
-        {contentFieldToContent($props.content?.button, styleFieldArg) ??
-          (state() === "uploading" ? (
-            <Spinner />
-          ) : (
-            getUploadButtonText(fileInfo().fileTypes)
-          ))}
+        {getButtonContent()}
       </label>
-      <div
-        class={twMerge(
-          "h-[1.25rem]  text-xs leading-5 text-gray-600",
-          styleFieldToClassName(
+      {mode === "manual" && files().length > 0 ? (
+        <button
+          onClick={() => {
+            setFiles([]);
+            inputRef.value = "";
+            $props.onChange?.([]);
+          }}
+          class={cn(
+            "h-[1.25rem] cursor-pointer rounded border-none bg-transparent text-gray-500 transition-colors hover:bg-slate-200 hover:text-gray-600",
+            styleFieldToClassName($props.appearance?.clearBtn, styleFieldArg),
+          )}
+          style={styleFieldToCssObject(
+            $props.appearance?.clearBtn,
+            styleFieldArg,
+          )}
+          data-state={state()}
+          data-ut-element="clear-btn"
+        >
+          {contentFieldToContent($props.content?.clearBtn, styleFieldArg) ??
+            "Clear"}
+        </button>
+      ) : (
+        <div
+          class={cn(
+            "h-[1.25rem] text-xs leading-5 text-gray-600",
+            styleFieldToClassName(
+              $props.appearance?.allowedContent,
+              styleFieldArg,
+            ),
+          )}
+          style={styleFieldToCssObject(
             $props.appearance?.allowedContent,
             styleFieldArg,
-          ),
-        )}
-        style={styleFieldToCssObject(
-          $props.appearance?.allowedContent,
-          styleFieldArg,
-        )}
-        data-state={state()}
-        data-ut-element="allowed-content"
-      >
-        {contentFieldToContent($props.content?.allowedContent, styleFieldArg) ??
-          allowedContentTextLabelGenerator(
-            uploadedThing.permittedFileInfo()?.config,
           )}
-      </div>
+          data-state={state()}
+          data-ut-element="allowed-content"
+        >
+          {contentFieldToContent(
+            $props.content?.allowedContent,
+            styleFieldArg,
+          ) ?? allowedContentTextLabelGenerator(uploadThing.routeConfig())}
+        </div>
+      )}
     </div>
   );
 }

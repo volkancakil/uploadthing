@@ -1,6 +1,11 @@
-import { resolveMaybeUrlArg } from "@uploadthing/shared";
+import {
+  resolveMaybeUrlArg,
+  warnIfInvalidPeerDependency,
+} from "@uploadthing/shared";
+import { version as uploadthingClientVersion } from "uploadthing/client";
 import type { FileRouter } from "uploadthing/types";
 
+import { peerDependencies } from "../../package.json";
 import type {
   GenerateTypedHelpersOptions,
   UploadthingComponentProps,
@@ -16,20 +21,25 @@ export { UploadButton, UploadDropzone, Uploader };
 export const generateUploadButton = <TRouter extends FileRouter>(
   opts?: GenerateTypedHelpersOptions,
 ) => {
-  const url = resolveMaybeUrlArg(opts?.url);
+  warnIfInvalidPeerDependency(
+    "@uploadthing/react",
+    peerDependencies.uploadthing,
+    uploadthingClientVersion,
+  );
 
-  const TypedButton = <
-    TEndpoint extends keyof TRouter,
-    TSkipPolling extends boolean = false,
-  >(
+  const url = resolveMaybeUrlArg(opts?.url);
+  const fetch = opts?.fetch ?? globalThis.fetch;
+
+  const TypedButton = <TEndpoint extends keyof TRouter>(
     props: Omit<
-      UploadButtonProps<TRouter, TEndpoint, TSkipPolling>,
+      UploadButtonProps<TRouter, TEndpoint>,
       keyof GenerateTypedHelpersOptions
     >,
   ) => (
-    <UploadButton<TRouter, TEndpoint, TSkipPolling>
+    <UploadButton<TRouter, TEndpoint>
       {...(props as any)}
       url={url}
+      fetch={fetch}
     />
   );
   return TypedButton;
@@ -38,20 +48,25 @@ export const generateUploadButton = <TRouter extends FileRouter>(
 export const generateUploadDropzone = <TRouter extends FileRouter>(
   opts?: GenerateTypedHelpersOptions,
 ) => {
-  const url = resolveMaybeUrlArg(opts?.url);
+  warnIfInvalidPeerDependency(
+    "@uploadthing/react",
+    peerDependencies.uploadthing,
+    uploadthingClientVersion,
+  );
 
-  const TypedDropzone = <
-    TEndpoint extends keyof TRouter,
-    TSkipPolling extends boolean = false,
-  >(
+  const url = resolveMaybeUrlArg(opts?.url);
+  const fetch = opts?.fetch ?? globalThis.fetch;
+
+  const TypedDropzone = <TEndpoint extends keyof TRouter>(
     props: Omit<
-      UploadDropzoneProps<TRouter, TEndpoint, TSkipPolling>,
+      UploadDropzoneProps<TRouter, TEndpoint>,
       keyof GenerateTypedHelpersOptions
     >,
   ) => (
-    <UploadDropzone<TRouter, TEndpoint, TSkipPolling>
+    <UploadDropzone<TRouter, TEndpoint>
       {...(props as any)}
       url={url}
+      fetch={fetch}
     />
   );
   return TypedDropzone;
@@ -60,31 +75,22 @@ export const generateUploadDropzone = <TRouter extends FileRouter>(
 export const generateUploader = <TRouter extends FileRouter>(
   opts?: GenerateTypedHelpersOptions,
 ) => {
-  const url = resolveMaybeUrlArg(opts?.url);
+  warnIfInvalidPeerDependency(
+    "@uploadthing/react",
+    peerDependencies.uploadthing,
+    uploadthingClientVersion,
+  );
 
-  const TypedUploader = <
-    TEndpoint extends keyof TRouter,
-    TSkipPolling extends boolean = false,
-  >(
+  const url = resolveMaybeUrlArg(opts?.url);
+  const fetch = opts?.fetch ?? globalThis.fetch;
+
+  const TypedUploader = <TEndpoint extends keyof TRouter>(
     props: Omit<
-      UploadthingComponentProps<TRouter, TEndpoint, TSkipPolling>,
+      UploadthingComponentProps<TRouter, TEndpoint>,
       keyof GenerateTypedHelpersOptions
     >,
   ) => (
-    <Uploader<TRouter, TEndpoint, TSkipPolling> {...(props as any)} url={url} />
+    <Uploader<TRouter, TEndpoint> {...(props as any)} url={url} fetch={fetch} />
   );
   return TypedUploader;
 };
-
-/**
- * @deprecated - use {@link generateUploadButton}, {@link generateUploadDropzone}, and {@link generateUploader} instead
- */
-export function generateComponents<TRouter extends FileRouter>(
-  initOpts?: GenerateTypedHelpersOptions,
-) {
-  return {
-    UploadButton: generateUploadButton<TRouter>(initOpts),
-    UploadDropzone: generateUploadDropzone<TRouter>(initOpts),
-    Uploader: generateUploader<TRouter>(initOpts),
-  };
-}

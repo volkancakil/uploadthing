@@ -1,7 +1,7 @@
-import * as Data from "effect/Data";
+import * as Micro from "effect/Micro";
+import * as Predicate from "effect/Predicate";
 
 import type { Json } from "./types";
-import { isObject } from "./utils";
 
 const ERROR_CODES = {
   // Generic
@@ -21,6 +21,7 @@ const ERROR_CODES = {
   URL_GENERATION_FAILED: 500,
   UPLOAD_FAILED: 500,
   MISSING_ENV: 500,
+  INVALID_SERVER_CONFIG: 500,
   FILE_LIMIT_EXCEEDED: 500,
 } as const;
 
@@ -58,7 +59,7 @@ export interface SerializedUploadThingError {
 
 export class UploadThingError<
   TShape extends Json = { message: string },
-> extends Data.Error<{ message: string }> {
+> extends Micro.Error<{ message: string }> {
   readonly _tag = "UploadThingError";
   readonly name = "UploadThingError";
 
@@ -80,14 +81,14 @@ export class UploadThingError<
     if (opts.cause instanceof Error) {
       this.cause = opts.cause;
     } else if (
-      isObject(opts.cause) &&
-      typeof opts.cause.status === "number" &&
-      typeof opts.cause.statusText === "string"
+      Predicate.isRecord(opts.cause) &&
+      Predicate.isNumber(opts.cause.status) &&
+      Predicate.isString(opts.cause.statusText)
     ) {
       this.cause = new Error(
         `Response ${opts.cause.status} ${opts.cause.statusText}`,
       );
-    } else if (typeof opts.cause === "string") {
+    } else if (Predicate.isString(opts.cause)) {
       this.cause = new Error(opts.cause);
     } else {
       this.cause = opts.cause;
@@ -117,7 +118,7 @@ export function getErrorTypeFromStatusCode(statusCode: number): ErrorCode {
 }
 
 export function getStatusCodeFromError(error: UploadThingError<any>) {
-  return ERROR_CODES[error.code] ?? 500;
+  return ERROR_CODES[error.code];
 }
 
 export const INTERNAL_DO_NOT_USE__fatalClientError = (e: Error) =>

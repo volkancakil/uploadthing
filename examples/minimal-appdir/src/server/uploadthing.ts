@@ -23,18 +23,19 @@ const f = createUploadthing({
 export const uploadRouter = {
   videoAndImage: f({
     image: {
-      maxFileSize: "4MB",
+      maxFileSize: "32MB",
       maxFileCount: 4,
       acl: "public-read",
     },
     video: {
       maxFileSize: "16MB",
     },
+    blob: {
+      maxFileSize: "8GB",
+    },
   })
     .middleware(({ req, files }) => {
       // Check some condition based on the incoming requrest
-      req;
-      //^?
       // if (!req.headers.get("x-some-header")) {
       //   throw new Error("x-some-header is required");
       // }
@@ -55,6 +56,6 @@ export const uploadRouter = {
       //   ^?
       console.log("upload completed", file);
     }),
-} satisfies FileRouter;
+};
 
 export type OurFileRouter = typeof uploadRouter;

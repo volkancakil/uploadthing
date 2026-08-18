@@ -1,9 +1,14 @@
 {
   "name": "@uploadthing/svelte",
-  "version": "6.5.4",
+  "version": "7.3.3",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "github:pingdotgg/uploadthing",
+    "directory": "packages/svelte"
+  },
   "scripts": {
-    "dev": "vite dev",
+    "dev": "vite build && svelte-package",
     "build": "vite build && pnpm package",
     "build:styles": "tailwindcss -i ./src/lib/styles.css -o ./dist/styles.css",
     "preview": "vite preview",
@@ -29,63 +34,31 @@
     "!dist/**/*.spec.*"
   ],
   "peerDependencies": {
-    "svelte": "^4.0.0",
-    "uploadthing": "^6.10.0"
+    "svelte": "^4.0.0 || ^5.0.0",
+    "uploadthing": "^7.2.0"
   },
   "dependencies": {
-    "@uploadthing/dropzone": "workspace:*",
     "@uploadthing/shared": "workspace:*",
-    "tailwind-merge": "^2.2.1"
+    "file-selector": "0.6.0"
   },
   "devDependencies": {
-    "@sveltejs/adapter-auto": "^3.1.1",
-    "@sveltejs/kit": "^2.5.4",
+    "@sveltejs/adapter-auto": "^3.3.1",
+    "@sveltejs/kit": "^2.15.1",
     "@sveltejs/package": "^2.3.0",
-    "@sveltejs/vite-plugin-svelte": "^3.1.0",
-    "postcss": "8.4.38",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@uploadthing/eslint-config": "workspace:*",
+    "eslint": "9.25.1",
+    "postcss": "8.4.49",
     "postcss-load-config": "^5.0.3",
     "publint": "^0.2.7",
-    "svelte": "^4.2.12",
-    "svelte-check": "^3.6.7",
-    "tailwindcss": "^3.4.1",
-    "tslib": "^2.6.2",
-    "typescript": "^5.4.5",
+    "svelte": "^5.16.1",
+    "svelte-check": "^4.1.1",
+    "tailwindcss": "^3.4.16",
+    "typescript": "5.8.3",
     "uploadthing": "workspace:*",
-    "vite": "^5.1.4"
+    "vite": "^6.3.4"
   },
   "svelte": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "type": "module",
-  "eslintConfig": {
-    "root": true,
-    "extends": [
-      "@uploadthing/eslint-config/base",
-      "@uploadthing/eslint-config/svelte"
-    ],
-    "ignorePatterns": [
-      "*.config.*"
-    ],
-    "rules": {
-      "no-restricted-imports": [
-        "error",
-        {
-          "patterns": [
-            {
-              "group": [
-                "@uploadthing/svelte",
-                "@uploadthing/svelte/*"
-              ],
-              "message": "Use relative src imports instead"
-            }
-          ],
-          "paths": [
-            {
-              "name": "effect",
-              "message": "Use alias imports instead (import * as X from \"effect/X\")"
-            }
-          ]
-        }
-      ]
-    }
-  }
+  "type": "module"
 }

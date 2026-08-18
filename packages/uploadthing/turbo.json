@@ -1,20 +1,29 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
-  "pipeline": {
+  "tasks": {
     "build": {
       "outputs": [
         "client/**",
+        "client-future/**",
+        "dist/**",
+        "effect-platform/**",
         "express/**",
         "fastify/**",
         "h3/**",
-        "internal/**",
         "next/**",
         "next-legacy/**",
+        "remix/**",
         "server/**",
         "tw/**",
         "types/**"
       ]
+    },
+    "dev": {
+      "persistent": false
+    },
+    "typecheck": {
+      "outputs": [".cache/tsbuildinfo.json"]
     }
   }
 }

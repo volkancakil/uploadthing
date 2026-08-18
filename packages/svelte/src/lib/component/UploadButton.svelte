@@ -5,30 +5,32 @@
 
   type TRouter = FileRouter;
   type TEndpoint = keyof TRouter;
-  type TSkipPolling = boolean;
 </script>
 
 <script
   lang="ts"
-  generics="TRouter extends FileRouter , TEndpoint extends keyof TRouter, TSkipPolling extends boolean = false"
+  generics="TRouter extends FileRouter , TEndpoint extends keyof TRouter"
 >
   import { onMount } from "svelte";
-  import { twMerge } from "tailwind-merge";
 
+  import type { StyleField } from "@uploadthing/shared";
   import {
     allowedContentTextLabelGenerator,
+    defaultClassListMerger,
     resolveMaybeUrlArg,
     styleFieldToClassName,
+    styleFieldToCssObject,
+    UploadAbortedError,
   } from "@uploadthing/shared";
-  import type { StyleField } from "@uploadthing/shared";
   import {
     generateMimeTypes,
     generatePermittedFileTypes,
   } from "uploadthing/client";
 
+  import { __createUploadThingInternal } from "../create-uploadthing";
   import type { UploadthingComponentProps } from "../types";
-  import { INTERNAL_createUploadThingGen } from "../create-uploadthing";
-  import { getFilesFromClipboardEvent, progressWidths } from "./shared";
+  import Cancel from "./Cancel.svelte";
+  import { getFilesFromClipboardEvent } from "./shared";
   import Spinner from "./Spinner.svelte";
 
   type ButtonStyleFieldCallbackArgs = {
@@ -37,6 +39,7 @@
     isUploading: boolean;
     uploadProgress: number;
     fileTypes: string[];
+    files: File[];
   };
 
   type UploadButtonAppearance = {
@@ -46,46 +49,36 @@
     clearBtn?: StyleField<ButtonStyleFieldCallbackArgs>;
   };
 
-  export let uploader: UploadthingComponentProps<
-    TRouter,
-    TEndpoint,
-    TSkipPolling
-  >;
+  export let uploader: UploadthingComponentProps<TRouter, TEndpoint>;
   export let appearance: UploadButtonAppearance = {};
-  // Allow to set internal state for testing
-  export let __internal_state: "readying" | "ready" | "uploading" | undefined =
-    undefined;
-  // Allow to set upload progress for testing
-  export let __internal_upload_progress: number | undefined = undefined;
-  // Allow to set ready explicitly and independently of internal state
-  export let __internal_ready: boolean | undefined = undefined;
-  // Allow to disable the button
-  export let __internal_button_disabled: boolean | undefined = undefined;
+  export let onChange: ((files: File[]) => void) | undefined = undefined;
+  export let disabled = false;
 
-  let uploadProgress = 0;
+  $: ({
+    mode = "auto",
+    appendOnPaste = false,
+    cn = defaultClassListMerger,
+  } = uploader.config ?? {});
+  let acRef = new AbortController();
+
   let fileInputRef: HTMLInputElement;
-  let labelRef: HTMLLabelElement;
-  let isManualTriggerDisplayed = false;
+  let uploadProgress = 0;
   let files: File[] = [];
 
-  const createUploadThing = INTERNAL_createUploadThingGen<TRouter>({
-    url: resolveMaybeUrlArg(uploader.url),
-  });
-  const { startUpload, isUploading, permittedFileInfo } = createUploadThing(
+  const { startUpload, isUploading, routeConfig } = __createUploadThingInternal(
+    resolveMaybeUrlArg(uploader.url),
     uploader.endpoint,
+    uploader.fetch ?? globalThis.fetch,
     {
-      skipPolling: !uploader?.onClientUploadComplete
-        ? true
-        : uploader?.skipPolling,
+      signal: acRef.signal,
+      headers: uploader.headers,
       onClientUploadComplete: (res) => {
-        if (fileInputRef) {
-          fileInputRef.value = "";
-        }
-        isManualTriggerDisplayed = false;
+        fileInputRef.value = "";
         files = [];
-        uploader.onClientUploadComplete?.(res);
+        void uploader.onClientUploadComplete?.(res);
         uploadProgress = 0;
       },
+      uploadProgressGranularity: uploader.uploadProgressGranularity,
       onUploadProgress: (p) => {
         uploadProgress = p;
         uploader.onUploadProgress?.(p);
@@ -96,62 +89,58 @@
     },
   );
 
-  $: ({ mode = "auto", appendOnPaste = false } = uploader.config ?? {});
-  $: uploadProgress = __internal_upload_progress ?? uploadProgress;
-  $: ({ fileTypes, multiple } = generatePermittedFileTypes(
-    $permittedFileInfo?.config,
-  ));
-  $: ready =
-    __internal_ready ?? (__internal_state === "ready" || fileTypes.length > 0);
+  const uploadFiles = (files: File[]) => {
+    const input = "input" in uploader ? uploader.input : undefined;
+    startUpload(files, input).catch((e) => {
+      if (e instanceof UploadAbortedError) {
+        void uploader.onUploadAborted?.();
+      } else {
+        throw e;
+      }
+    });
+  };
+
+  $: ({ fileTypes, multiple } = generatePermittedFileTypes($routeConfig));
   $: className = ($$props.class as string) ?? "";
 
-  $: styleFieldArg = {
-    __runtime: "svelte",
-    ready: ready,
-    isUploading: __internal_state === "uploading" || $isUploading,
-    uploadProgress,
-    fileTypes,
-  } satisfies ButtonStyleFieldCallbackArgs;
-
   $: state = (() => {
-    if (__internal_state) return __internal_state;
-    if (!ready) return "readying";
-    if (ready && !$isUploading) return "ready";
-
+    if (disabled) return "disabled";
+    if (!disabled && !$isUploading) return "ready";
     return "uploading";
   })();
 
-  const handlePaste = (event: ClipboardEvent) => {
-    if (!appendOnPaste) return;
-    // eslint-disable-next-line no-undef
-    if (document.activeElement !== labelRef) return;
-
-    const pastedFiles = getFilesFromClipboardEvent(event);
-    if (!pastedFiles) return;
-
-    files = [...files, ...pastedFiles];
-
-    if (mode === "auto") {
-      const input = "input" in uploader ? uploader.input : undefined;
-      void startUpload(files, input);
-    }
-  };
-
   onMount(() => {
-    // eslint-disable-next-line no-undef
-    window.addEventListener("paste", handlePaste);
-    return () => {
+    const controller = new AbortController();
+    const handlePaste = (event: ClipboardEvent) => {
+      if (!appendOnPaste) return;
       // eslint-disable-next-line no-undef
-      window.removeEventListener("paste", handlePaste);
+      if (document.activeElement !== fileInputRef) return;
+
+      const pastedFiles = getFilesFromClipboardEvent(event);
+      if (!pastedFiles) return;
+
+      files = [...files, ...pastedFiles];
+
+      onChange?.(files);
+
+      if (mode === "auto") uploadFiles(files);
     };
+    // eslint-disable-next-line no-undef
+    document.addEventListener("paste", handlePaste, {
+      signal: controller.signal,
+    });
+
+    // eslint-disable-next-line no-undef
+    return () => controller.abort();
   });
 
-  const getUploadButtonText = (fileTypes: string[]) => {
-    if (isManualTriggerDisplayed)
-      return `Upload ${files.length} file${files.length === 1 ? "" : "s"}`;
-    if (fileTypes.length === 0) return "Loading...";
-    return `Choose File${multiple ? `(s)` : ``}`;
-  };
+  $: styleFieldArg = {
+    ready: state !== "readying",
+    isUploading: state === "uploading",
+    uploadProgress,
+    fileTypes,
+    files,
+  } as ButtonStyleFieldCallbackArgs;
 </script>
 
 <!--
@@ -162,35 +151,42 @@ Example:
 ```
 -->
 <div
-  class={twMerge(
+  class={cn(
     "flex flex-col items-center justify-center gap-1",
     className,
     styleFieldToClassName(appearance?.container, styleFieldArg),
   )}
-  style={styleFieldToClassName(appearance?.container, styleFieldArg)}
+  style={`--progress-width: ${uploadProgress}%; ${styleFieldToClassName(appearance?.container, styleFieldArg)}`}
   data-state={state}
 >
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <label
-    bind:this={labelRef}
-    class={twMerge(
-      "relative flex h-10 w-36 cursor-pointer items-center justify-center overflow-hidden rounded-md text-white after:transition-[width] after:duration-500",
-      state === "readying" && "cursor-not-allowed bg-blue-400",
-      state === "uploading" &&
-        `bg-blue-400 after:absolute after:left-0 after:h-full after:bg-blue-600 ${progressWidths[uploadProgress]}`,
-      state === "ready" && "bg-blue-600",
+    class={cn(
+      "group relative flex h-10 w-36 cursor-pointer items-center justify-center overflow-hidden rounded-md text-white after:transition-[width] after:duration-500 focus-within:ring-2 focus-within:ring-blue-600 focus-within:ring-offset-2",
+      "disabled:pointer-events-none",
+      "data-[state=disabled]:cursor-not-allowed data-[state=readying]:cursor-not-allowed",
+      "data-[state=disabled]:bg-blue-400 data-[state=ready]:bg-blue-600 data-[state=readying]:bg-blue-400 data-[state=uploading]:bg-blue-400",
+      "after:absolute after:left-0 after:h-full after:w-[var(--progress-width)] after:content-[''] data-[state=uploading]:after:bg-blue-600",
       styleFieldToClassName(appearance?.button, styleFieldArg),
     )}
     style={styleFieldToClassName(appearance?.button, styleFieldArg)}
     data-state={state}
     data-ut-element="button"
     on:click={(e) => {
-      if (isManualTriggerDisplayed) {
+      if (state === "uploading") {
         e.preventDefault();
         e.stopPropagation();
-        const input = "input" in uploader ? uploader.input : undefined;
-        void startUpload(files, input);
+
+        acRef.abort();
+        acRef = new AbortController();
+        return;
+      }
+      if (mode === "manual" && files.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        uploadFiles(files);
       }
     }}
   >
@@ -198,30 +194,42 @@ Example:
       bind:this={fileInputRef}
       class="sr-only"
       type="file"
-      accept={generateMimeTypes(fileTypes ).join(", ")}
-      disabled={__internal_button_disabled ?? !ready}
+      accept={generateMimeTypes(fileTypes).join(", ")}
+      {disabled}
       {multiple}
+      tabindex={fileTypes.length === 0 ? -1 : 0}
       on:change={(e) => {
         if (!e.currentTarget?.files) return;
         const selectedFiles = Array.from(e.currentTarget.files);
 
+        onChange?.(selectedFiles);
+
         if (mode === "manual") {
           files = selectedFiles;
-          isManualTriggerDisplayed = true;
           return;
         }
 
-        const input = "input" in uploader ? uploader.input : undefined;
-        void startUpload(selectedFiles, input);
+        uploadFiles(selectedFiles);
       }}
     />
     <slot name="button-content" state={styleFieldArg}>
-      {#if state !== "uploading"}
-        {getUploadButtonText(fileTypes)}
-      {:else if uploadProgress === 100}
-        <Spinner />
+      {#if state === "readying"}
+        {`Loading...`}
+      {:else if state === "uploading"}
+        {#if uploadProgress >= 100}
+          <Spinner />
+        {:else}
+          <span class="z-50">
+            <span class="block group-hover:hidden"
+              >{Math.round(uploadProgress)}%</span
+            >
+            <Cancel {cn} className="hidden size-4 group-hover:block" />
+          </span>
+        {/if}
+      {:else if mode === "manual" && files.length > 0}
+        {`Upload ${files.length} file${files.length === 1 ? "" : "s"}`}
       {:else}
-        <span class="z-50">{uploadProgress}%</span>
+        {`Choose File${multiple ? `(s)` : ``}`}
       {/if}
     </slot>
   </label>
@@ -229,13 +237,10 @@ Example:
     <button
       on:click={() => {
         files = [];
-        isManualTriggerDisplayed = false;
-
-        if (fileInputRef) {
-          fileInputRef.value = "";
-        }
+        fileInputRef.value = "";
+        onChange?.([]);
       }}
-      class={twMerge(
+      class={cn(
         "h-[1.25rem] cursor-pointer rounded border-none bg-transparent text-gray-500 transition-colors hover:bg-slate-200 hover:text-gray-600",
         styleFieldToClassName(appearance?.clearBtn, styleFieldArg),
       )}
@@ -243,12 +248,14 @@ Example:
       data-state={state}
       data-ut-element="clear-btn"
     >
-      <slot name="clear-btn" state={styleFieldArg}>Clear</slot>
+      <slot name="clear-btn" state={styleFieldArg}>
+        {`Clear`}
+      </slot>
     </button>
   {:else}
     <div
-      class={twMerge(
-        "h-[1.25rem]  text-xs leading-5 text-gray-600",
+      class={cn(
+        "h-[1.25rem] text-xs leading-5 text-gray-600",
         styleFieldToClassName(appearance?.allowedContent, styleFieldArg),
       )}
       style={styleFieldToClassName(appearance?.allowedContent, styleFieldArg)}
@@ -256,7 +263,7 @@ Example:
       data-ut-element="allowed-content"
     >
       <slot name="allowed-content" state={styleFieldArg}>
-        {allowedContentTextLabelGenerator($permittedFileInfo?.config)}
+        {allowedContentTextLabelGenerator($routeConfig)}
       </slot>
     </div>
   {/if}

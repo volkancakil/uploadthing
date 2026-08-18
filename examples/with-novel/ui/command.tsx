@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { Dialog, DialogContent } from "@/ui/dialog";
-import { type DialogProps } from "@radix-ui/react-dialog";
 import { Command as CommandPrimitive } from "cmdk";
+import { type Dialog as DialogPrimitive } from "radix-ui";
 import { twMerge } from "tailwind-merge";
 
 const Magic = ({ className }: { className: string }) => (
@@ -50,7 +50,7 @@ const Command = React.forwardRef<
 ));
 Command.displayName = CommandPrimitive.displayName;
 
-interface CommandDialogProps extends DialogProps {}
+interface CommandDialogProps extends DialogPrimitive.DialogProps {}
 
 const CommandDialog = ({ children, ...props }: CommandDialogProps) => {
   return (
@@ -69,7 +69,7 @@ const CommandInput = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
 >(({ className, ...props }, ref) => (
   <div className="flex items-center border-b px-4" cmdk-input-wrapper="">
-    <Magic className="mr-2 h-4 w-4 shrink-0 text-purple-500 " />
+    <Magic className="mr-2 h-4 w-4 shrink-0 text-purple-500" />
     <CommandPrimitive.Input
       ref={ref}
       className={twMerge(

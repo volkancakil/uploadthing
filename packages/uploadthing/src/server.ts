@@ -1,96 +1,47 @@
+import * as Effect from "effect/Effect";
+
 import type { Json } from "@uploadthing/shared";
-import { getStatusCodeFromError, UploadThingError } from "@uploadthing/shared";
+import { UploadThingError } from "@uploadthing/shared";
 
-import { UPLOADTHING_VERSION } from "./internal/constants";
-import { formatError } from "./internal/error-formatter";
-import {
-  buildPermissionsInfoHandler,
-  buildRequestHandler,
-  runRequestHandlerAsync,
-} from "./internal/handler";
-import { incompatibleNodeGuard } from "./internal/incompat-node-guard";
-import type { FileRouter, RouteHandlerOptions } from "./internal/types";
-import type { CreateBuilderOptions } from "./internal/upload-builder";
-import { createBuilder } from "./internal/upload-builder";
+import { makeAdapterHandler } from "./_internal/handler";
+import { extractRouterConfig as extractEffect } from "./_internal/route-config";
+import type { CreateBuilderOptions } from "./_internal/upload-builder";
+import { createBuilder } from "./_internal/upload-builder";
+import type { FileRouter, RouteHandlerOptions } from "./types";
 
-export { UTFiles } from "./internal/types";
+export {
+  UTFiles,
+  /**
+   * This is an experimental feature.
+   * You need to be feature flagged on our backend to use this
+   */
+  UTRegion as experimental_UTRegion,
+} from "./_internal/types";
 export { UTApi } from "./sdk";
 export { UTFile } from "./sdk/ut-file";
-export { UploadThingError, type FileRouter };
+export { UploadThingError, type FileRouter, makeAdapterHandler, createBuilder };
 
-type MiddlewareArgs = { req: Request; res: undefined; event: undefined };
+type AdapterArgs = {
+  req: Request;
+};
 
 export const createUploadthing = <TErrorShape extends Json>(
   opts?: CreateBuilderOptions<TErrorShape>,
-) => createBuilder<MiddlewareArgs, TErrorShape>(opts);
-
-export interface ResponseWithCleanup extends Response {
-  /** custom property where a Promise may be put that you can await in for example Cloudflare Workers */
-  cleanup?: Promise<unknown>;
-}
-
-/** @internal */
-export const INTERNAL_DO_NOT_USE_createRouteHandlerCore = <
-  TRouter extends FileRouter,
->(
-  opts: RouteHandlerOptions<TRouter>,
-  adapter: string,
-) => {
-  incompatibleNodeGuard();
-
-  const requestHandler = buildRequestHandler<TRouter, MiddlewareArgs>(
-    opts,
-    adapter,
-  );
-  const getBuildPerms = buildPermissionsInfoHandler<TRouter>(opts);
-
-  const POST = async (
-    request: Request | { request: Request },
-  ): Promise<Response | ResponseWithCleanup> => {
-    const req = request instanceof Request ? request : request.request;
-    const response = await runRequestHandlerAsync(
-      requestHandler,
-      {
-        req,
-        middlewareArgs: { req, event: undefined, res: undefined },
-      },
-      opts.config,
-    );
-
-    if (response.success === false) {
-      return Response.json(formatError(response.error, opts.router), {
-        status: getStatusCodeFromError(response.error),
-        headers: { "x-uploadthing-version": UPLOADTHING_VERSION },
-      });
-    }
-
-    const res = Response.json(response.body, {
-      headers: { "x-uploadthing-version": UPLOADTHING_VERSION },
-    });
-    // @ts-expect-error - this is a custom property
-    res.cleanup = response.cleanup;
-    return res as ResponseWithCleanup;
-  };
-
-  const GET = (request: Request | { request: Request }) => {
-    const _req = request instanceof Request ? request : request.request;
-
-    return Response.json(getBuildPerms(), {
-      headers: { "x-uploadthing-version": UPLOADTHING_VERSION },
-    });
-  };
-
-  return { GET, POST };
-};
+) => createBuilder<AdapterArgs, TErrorShape>(opts);
 
 export const createRouteHandler = <TRouter extends FileRouter>(
   opts: RouteHandlerOptions<TRouter>,
-) => INTERNAL_DO_NOT_USE_createRouteHandlerCore(opts, "server");
+) => {
+  return makeAdapterHandler<[Request | { request: Request }], AdapterArgs>(
+    (ev) =>
+      Effect.succeed({
+        req: "request" in ev ? ev.request : ev,
+      }),
+    (ev) => Effect.succeed("request" in ev ? ev.request : ev),
+    opts,
+    "server",
+  );
+};
 
 export const extractRouterConfig = (router: FileRouter) =>
-  buildPermissionsInfoHandler({ router })();
-
-/**
- * @deprecated Use {@link createRouteHandler} instead
- */
-export const createServerHandler = createRouteHandler;
+  Effect.runSync(extractEffect(router));

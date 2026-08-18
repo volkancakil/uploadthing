@@ -3,56 +3,45 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "20.x",
-    "pnpm": "8.x"
+    "node": ">=22.x",
+    "pnpm": "10.x"
   },
-  "packageManager": "pnpm@8.15.6",
-  "workspaces": [
-    "docs",
-    "examples/*",
-    "examples/backend-adapters/*",
-    "packages/*",
-    "packages/nuxt/*",
-    "tooling/*"
-  ],
+  "packageManager": "pnpm@10.10.0",
   "scripts": {
     "build:all": "turbo run build",
-    "build": "turbo run build --filter \"./packages/*\"",
+    "build:vanilla": "turbo run build --filter uploadthing...",
+    "build:react": "turbo run build --filter @uploadthing/react...",
+    "build": "turbo run build --filter \"./packages/*\" --concurrency=15",
     "clean": "turbo run clean && git clean -xdf node_modules",
-    "dev:all": "turbo run dev",
-    "dev": "turbo run dev --filter \"./packages/*\"",
-    "dev:react": "turbo run dev --filter @uploadthing/react...",
+    "dev:all": "turbo watch dev",
+    "dev": "turbo watch dev --filter \"./packages/*\"",
+    "dev:vanilla": "turbo watch dev --filter uploadthing...",
+    "dev:expo": "turbo watch dev --filter @uploadthing/expo...",
+    "dev:react": "turbo watch dev --filter @uploadthing/react...",
+    "dev:pg": "turbo watch dev --filter next-playground...",
+    "dev:docs": "turbo watch dev --filter docs...",
     "lint": "turbo run lint && manypkg check",
     "format:check": "prettier --check .",
     "format": "prettier --write . --list-different",
-    "test": "vitest run",
+    "test": "turbo run test --filter @uploadthing/* --filter uploadthing",
     "test:all": "turbo test",
-    "test:watch": "vitest",
+    "test:watch": "turbo watch test --filter @uploadthing/* --filter uploadthing",
     "typecheck": "turbo run typecheck"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@actions/github": "^6.0.0",
     "@changesets/changelog-github": "^0.5.0",
-    "@changesets/cli": "^2.27.1",
-    "@ianvs/prettier-plugin-sort-imports": "^4.1.1",
-    "@manypkg/cli": "^0.21.3",
-    "@prettier/sync": "^0.5.1",
-    "@types/bun": "^1.0.8",
-    "@types/node": "^20.11.21",
-    "@uploadthing/eslint-config": "0.2.0",
-    "@vitest/coverage-v8": "^1.3.1",
-    "happy-dom": "^13.6.2",
-    "msw": "2.2.13",
-    "prettier": "^3.2.5",
-    "prettier-plugin-tailwindcss": "^0.5.11",
-    "turbo": "^1.13.2",
-    "typescript": "^5.4.5",
-    "vite-tsconfig-paths": "^4.3.1",
-    "vitest": "^1.3.1"
-  },
-  "pnpm": {
-    "patchedDependencies": {
-      "msw@2.2.13": "patches/msw@2.2.13.patch",
-      "@mswjs/interceptors@0.26.15": "patches/@mswjs__interceptors@0.26.15.patch"
-    }
+    "@changesets/cli": "^2.27.11",
+    "@ianvs/prettier-plugin-sort-imports": "^4.4.0",
+    "@manypkg/cli": "^0.23.0",
+    "@prettier/sync": "^0.5.2",
+    "@types/bun": "^1.2.5",
+    "@types/node": "^22.10.0",
+    "playwright": "1.52.0",
+    "prettier": "3.5.3",
+    "prettier-plugin-tailwindcss": "^0.6.9",
+    "turbo": "2.5.3-canary.1",
+    "typescript": "5.8.3",
+    "uploadthing": "workspace:*"
   }
 }

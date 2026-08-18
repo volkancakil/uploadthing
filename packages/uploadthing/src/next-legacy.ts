@@ -1,77 +1,53 @@
-// This node import should be fine since it's available in both node and edge runtimes
-// https://vercel.com/docs/functions/edge-functions/edge-runtime#compatible-node.js-modules
 import type { NextApiRequest, NextApiResponse } from "next";
+import * as Effect from "effect/Effect";
 
 import type { Json } from "@uploadthing/shared";
-import { getStatusCodeFromError } from "@uploadthing/shared";
 
-import { UPLOADTHING_VERSION } from "./internal/constants";
-import { formatError } from "./internal/error-formatter";
-import {
-  buildPermissionsInfoHandler,
-  buildRequestHandler,
-  runRequestHandlerAsync,
-} from "./internal/handler";
-import { incompatibleNodeGuard } from "./internal/incompat-node-guard";
-import { toWebRequest } from "./internal/to-web-request";
-import type { FileRouter, RouteHandlerOptions } from "./internal/types";
-import type { CreateBuilderOptions } from "./internal/upload-builder";
-import { createBuilder } from "./internal/upload-builder";
+import { makeAdapterHandler } from "./_internal/handler";
+import { toWebRequest } from "./_internal/to-web-request";
+import type { CreateBuilderOptions } from "./_internal/upload-builder";
+import { createBuilder } from "./_internal/upload-builder";
+import type { FileRouter, RouteHandlerOptions } from "./types";
 
-export { UTFiles } from "./internal/types";
+export {
+  UTFiles,
+  /**
+   * This is an experimental feature.
+   * You need to be feature flagged on our backend to use this
+   */
+  UTRegion as experimental_UTRegion,
+} from "./_internal/types";
 export type { FileRouter };
 
-type MiddlewareArgs = {
+type AdapterArgs = {
   req: NextApiRequest;
   res: NextApiResponse;
-  event: undefined;
 };
 
 export const createUploadthing = <TErrorShape extends Json>(
   opts?: CreateBuilderOptions<TErrorShape>,
-) => createBuilder<MiddlewareArgs, TErrorShape>(opts);
+) => createBuilder<AdapterArgs, TErrorShape>(opts);
 
 export const createRouteHandler = <TRouter extends FileRouter>(
   opts: RouteHandlerOptions<TRouter>,
 ) => {
-  incompatibleNodeGuard();
-
-  const requestHandler = buildRequestHandler<TRouter, MiddlewareArgs>(
+  const handler = makeAdapterHandler<
+    [NextApiRequest, NextApiResponse],
+    AdapterArgs
+  >(
+    (req, res) => Effect.succeed({ req, res }),
+    (req) => toWebRequest(req),
     opts,
     "nextjs-pages",
   );
-  const getBuildPerms = buildPermissionsInfoHandler<TRouter>(opts);
 
   return async (req: NextApiRequest, res: NextApiResponse) => {
-    // Return valid endpoints
-    if (req.method === "GET") {
-      const perms = getBuildPerms();
-      res.status(200).json(perms);
-      return;
+    const response = await handler(req, res);
+    res.status(response.status);
+    for (const [name, value] of response.headers) {
+      res.setHeader(name, value);
     }
-
-    const response = await runRequestHandlerAsync(
-      requestHandler,
-      {
-        req: toWebRequest(req),
-        middlewareArgs: { req, res, event: undefined },
-      },
-      opts.config,
-    );
-
-    res.setHeader("x-uploadthing-version", UPLOADTHING_VERSION);
-
-    if (response.success === false) {
-      res.status(getStatusCodeFromError(response.error));
-      res.setHeader("x-uploadthing-version", UPLOADTHING_VERSION);
-      return res.json(formatError(response.error, opts.router));
-    }
-
-    return res.json(response.body);
+    // FIXME: Should be able to just forward it instead of consuming it first
+    return res.json(await response.json());
   };
 };
-
-/**
- * @deprecated Use {@link createRouteHandler} instead
- */
-export const createNextPageApiHandler = createRouteHandler;

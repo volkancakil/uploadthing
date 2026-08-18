@@ -1,7 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
-  "pipeline": {
+  "tasks": {
     "dev:prepare": {
       "dependsOn": ["^build"],
       "outputs": [
@@ -23,9 +23,13 @@
       "cache": false
     },
     "lint": {
-      "dependsOn": ["^topo", "^build", "dev:prepare"],
+      "dependsOn": ["topo", "^build", "dev:prepare"],
       "outputs": [],
       "cache": false
+    },
+    "typecheck": {
+      "dependsOn": ["topo", "^build", "dev:prepare"],
+      "outputs": [".cache/tsbuildinfo.json"]
     }
   }
 }
